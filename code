@@ -1,0 +1,2539 @@
+
+# 0. load R packages ####
+{
+  library(readxl)
+  library(ComplexHeatmap)
+  library(maftools)
+  library(tidyr)
+  library(tidyverse)
+  library(ggpubr)
+  library(NMF)
+  library(circlize)
+  library(ggplot2)
+  library(Seurat)
+  library(chimeraviz)
+  library(GenomicFeatures)
+  library(AnnotationDbi)
+  library(tximport)
+  library(DESeq2)
+  library(FactoMineR)
+  library(factoextra)
+  library(limma)
+  library(edgeR)
+  library(sva)
+  library(ggfortify)
+  library(DOSE)
+  library(org.Hs.eg.db)
+  library(clusterProfiler)
+  library(ggrepel)
+  library(dplyr)
+  library(reshape2)
+  library(CCSBUtils)
+  library(GSVA)
+  library(pheatmap)
+  library(RColorBrewer)
+  library(BSgenome.Hsapiens.UCSC.hg19)
+  library(ggsci)
+  library(stats)
+  library(deconstructSigs)
+  library(sigminer)
+  library(SomaticSignatures)
+  library(SomaticCancerAlterations)
+  library(BSgenome.Hsapiens.1000genomes.hs37d5)
+  library(ggsignif)
+  library(ggpubr)
+  library(GSEABase)
+  library(estimate)
+  library(xCell)
+  library(multiOmicsViz)
+  library(corrplot)
+  }
+
+# 1. Code for WES analysis ####
+## 1.1 Load COSMIC Driver gene ####
+cosmic_hallmark_driver <- read.csv("D:/bioinfo/database/COSMIC/cancer_gene_census.csv",header = T)
+cosmic_hallmark_driver <- subset(cosmic_hallmark_driver,Hallmark=="Yes")
+cosmic_hallmark_driver <- subset(cosmic_hallmark_driver,Somatic=="yes")
+cosmic_hallmark_driver_genes <- unique(cosmic_hallmark_driver$Gene.Symbol)
+
+cosmic_hallmark_driver2 <- read.table("D:/bioinfo/database/COSMIC/Cancer_Gene_Census_Hallmarks_Of_Cancer.tsv",header = T,sep = '\t',fill = T)
+cosmic_hallmark_driver_genes2 <- unique(cosmic_hallmark_driver2$GENE_NAME)
+
+## 1.2 Input self maf ####
+maf <- read.maf("D:/bioinfo/project/IBC_Skin/output_files/WES/MutSigCV/15IBC_12nonIBC_33TCGA/All_Tumor_33TCGA.mutations.txt")
+
+sample_list <- data.frame(sample=maf@variants.per.sample$Tumor_Sample_Barcode)
+sample_list <- data.frame(sample=sample_list[order(sample_list$sample)[1:27],])
+
+vc_cols = RColorBrewer::brewer.pal(n = 8, name = 'Paired')
+names(vc_cols) = c(
+  'Frame_Shift_Del',
+  'Missense_Mutation',
+  'Nonsense_Mutation',
+  'Multi_Hit',
+  'Frame_Shift_Ins',
+  'In_Frame_Ins',
+  'Splice_Site',
+  'In_Frame_Del'
+)
+
+TMB_df <- tmb(maf)
+
+col_anno <- data.frame(sample = TMB_df$Tumor_Sample_Barcode,
+                       TMB = TMB_df$total_perMB)
+col_anno$sample <- as.character(col_anno$sample)
+col_anno %>% separate(sample, sep = "-", into = c("Patient", "Tissue")) -> col_anno
+col_anno$sample <- TMB_df$Tumor_Sample_Barcode
+col_anno %>% mutate(Group = str_match(Patient, "nonIBC")) -> col_anno
+col_anno[is.na(col_anno)] <- "IBC"
+col_anno <- col_anno[order(col_anno$Tissue,col_anno$Group,col_anno$Patient),]
+col_anno$Tumor_Sample_Barcode <- col_anno$sample
+col_anno <- subset(col_anno,sample %in% sample_list$sample)
+
+# 17IBC 5nonIBC 3subtypes
+col_anno$Subtype <- c("TNBC","HER2+","TNBC","HR+HER2-","HER2+","HER2+","TNBC","TNBC","HR+HER2-","HR+HER2-","HR+HER2-","HR+HER2-","HER2+","TNBC","HER2+","HER2+","HER2+","HR+HER2-","HR+HER2-"
+                      ,"TNBC","TNBC","TNBC","HER2+","HER2+","HER2+","TNBC","TNBC","HR+HER2-","HR+HER2-","HR+HER2-","HR+HER2-","TNBC","HER2+","TNBC","HER2+","HER2+","HER2+","HR+HER2-","HR+HER2-")
+# 17IBC 12 nonIBC 3subtypes
+col_anno$Subtype <- c("TNBC", #1
+                      "HER2+", #2
+                      "TNBC", #3
+                      "TNBC", #4 
+                      "HR+HER2-", #5
+                      #"HR-HER2+", #6
+                      "HER2+", #7
+                      "HER2+", #8
+                      "TNBC", #9
+                      "TNBC", #10
+                      "HR+HER2-", #11
+                      "HR+HER2-", #12
+                      "HR+HER2-", #13
+                      "HR+HER2-", #14
+                      #"TNBC", #15
+                      "HER2+", #16
+                      "TNBC", #17
+                      "HER2+", #n1
+                      "HER2+", #n2
+                      "HER2+", #n3
+                      "HR+HER2-", #n4
+                      "HR+HER2-", #n5
+                      "HR+HER2-", #n6
+                      "HER2+", #n7
+                      "HER2+", #n8
+                      "TNBC", #n9
+                      "TNBC", #n10
+                      "TNBC", #n11
+                      "HR+HER2-"  #n12
+                      
+)
+
+
+rownames(col_anno) <- col_anno$sample
+col_anno$Cohort <- "FAH"
+
+maf <- read.maf("D:/bioinfo/project/IBC_Skin/output_files/WES/maf/All_Tumor.maf", clinicalData = col_anno) # 12nonIBC
+maf <- subsetMaf(maf, tsb =  maf@clinical.data$Tumor_Sample_Barcode[1:20])
+
+
+annocolors1 = RColorBrewer::brewer.pal(n = 10,name = 'Spectral')
+annocolors2 = RColorBrewer::brewer.pal(n = 10,name = 'Paired')
+
+annocolors_1 <- annocolors1[1:2]
+annocolors_2 <- annocolors2[1:2]
+annocolors_3 <- c("#8ECFC9","#FFBE7A","#BEB8DC")
+annocolors_4 <- annocolors2[3:4]
+annocolors_5 <- annocolors2[5:6]
+
+names(annocolors_1) = c("IBC", "nonIBC")
+names(annocolors_2) = c("S", "T")
+names(annocolors_3) = c("TNBC","Her2+","ER+/Her2-")
+names(annocolors_3) = c("HER2+","HR+HER2-","TNBC")
+#names(annocolors_3) = c("HR+HER2+","HR+HER2-","HR-HER2+","TNBC")
+names(annocolors_4) = c("ER+", "ER-")
+names(annocolors_5) = c("FAH", "TCGA-BRCA")
+
+annocolors = list(Group = annocolors_1,
+                  Tissue = annocolors_2,
+                  Subtype = annocolors_3,
+                  Cohort = annocolors_5)
+
+maf_Tumor <- subsetMaf(maf,clinQuery = "Tissue == 'T'")
+maf_IBC_Tumor <- subsetMaf(maf_Tumor,clinQuery = "Group == 'IBC'")
+maf_nonIBC_Tumor <- subsetMaf(maf_Tumor,clinQuery = "Group == 'nonIBC'")
+
+
+## 1.3 Input tcga maf ####
+TCGA_maf <- read.table("D:/bioinfo/project/IBC_Skin/input_files/TCGA_BRCA_asian.maf",row.names = 1,header = T,sep = '\t',fill = T)
+TCGA_maf$Chromosome <- paste0("chr",TCGA_maf$Chromosome)
+
+BRCA_clinical <- readRDS("D:/bioinfo/database/TCGA_BRCA/TCGA_BRCA_clinical_2022.11.16.rds")
+
+patient_info <- readRDS("D:/bioinfo/project/IBC_Skin/R_base/TCGA_BRCA_33asian.rds")
+
+patient_info$Receptor_Subtype <- "N_A"
+patient_info$Receptor_Subtype[which(patient_info$er_status_by_ihc=="Negative" & patient_info$her2_status_by_ihc=="Negative")] <- "TNBC"
+patient_info$Receptor_Subtype[which(patient_info$er_status_by_ihc=="Positive" & patient_info$her2_status_by_ihc=="Positive")] <- "HER2+"
+patient_info$Receptor_Subtype[which(patient_info$er_status_by_ihc=="Positive" & patient_info$her2_status_by_ihc=="Negative")] <- "HR+HER2-"
+patient_info$Receptor_Subtype[which(patient_info$er_status_by_ihc=="Negative" & patient_info$her2_status_by_ihc=="Positive")] <- "HER2+"
+patient_info$Subtype <- patient_info$Receptor_Subtype
+patient_info$cohort <- "TCGA-BRCA"
+
+TCGA_maf$sample <- substr(TCGA_maf$Tumor_Sample_Barcode,1,12)
+TCGA_maf <- subset(TCGA_maf, sample %in% patient_info$bcr_patient_barcode)
+
+patient_info <- subset(patient_info, bcr_patient_barcode %in% TCGA_maf$sample)
+
+TCGA_maf <- read.maf(TCGA_maf)
+
+TCGA_TMB_df <- tmb(TCGA_maf)
+
+TCGA_col_anno <- data.frame(sample = TCGA_TMB_df$Tumor_Sample_Barcode,
+                            TMB = TCGA_TMB_df$total_perMB)
+TCGA_col_anno$Patient <- substr(TCGA_col_anno$sample,1,12)
+TCGA_col_anno$Tissue <- "T"
+TCGA_col_anno$Group <- "nonIBC"
+TCGA_col_anno$Cohort <- "TCGA-BRCA"
+
+TCGA_col_anno <- TCGA_col_anno[order(TCGA_col_anno$Tissue,TCGA_col_anno$Group,TCGA_col_anno$Patient),]
+TCGA_col_anno$Tumor_Sample_Barcode <- TCGA_col_anno$sample
+TCGA_clinical_subset <- data.frame(Patient=patient_info$bcr_patient_barcode,Subtype=patient_info$Subtype)
+TCGA_col_anno <- merge(TCGA_col_anno,TCGA_clinical_subset,by="Patient")
+rownames(TCGA_col_anno) <- TCGA_col_anno$Patient
+TCGA_col_anno <- TCGA_col_anno[,colnames(col_anno)]
+
+
+## 1.4 Input tcga cnv data & subset patients with maf & rnaseq ####
+BRCAcnvMatrix <- readRDS("D:/bioinfo/database/TCGA_BRCA/BRCAcnvMatrix_hg38_Masked_Copy_Number_Segment.rds")
+BRCAcnvMatrix <- BRCAcnvMatrix[,2:7]
+BRCAcnvMatrix <- BRCAcnvMatrix[,c(6,1:5)]
+BRCAcnvMatrix$Sample <- substr(BRCAcnvMatrix$Sample,1,12)
+BRCAcnvMatrix <- subset(BRCAcnvMatrix,Sample %in% TCGA_col_anno$Patient)
+colnames(BRCAcnvMatrix) <- c("Sample","Chromosome","Start Position","End Position","Num markers","Seg.CN")
+#write.table(BRCAcnvMatrix,"D:/bioinfo/project/IBC_Skin/input_files/TCGA_GISTIC_input_20230622.txt",row.names = F,col.names = T,sep = '\t', quote = F)
+
+TCGA_col_anno <- subset(TCGA_col_anno, Patient %in% BRCAcnvMatrix$Sample)
+TCGA_col_anno$Cohort <- "TCGA-BRCA"
+
+TCGA_maf <- read.table("D:/bioinfo/project/IBC_Skin/input_files/TCGA_BRCA_asian.maf",row.names = 1,header = T,sep = '\t',fill = T)
+TCGA_maf$Chromosome <- paste0("chr",TCGA_maf$Chromosome)
+
+TCGA_maf$sample <- substr(TCGA_maf$Tumor_Sample_Barcode,1,12)
+TCGA_maf <- subset(TCGA_maf, sample %in% patient_info$bcr_patient_barcode)
+TCGA_maf <- read.maf(TCGA_maf, clinicalData = TCGA_col_anno)
+
+col_anno <- rbind(col_anno,TCGA_col_anno)
+
+maf_Tumor <- merge_mafs(c(maf_Tumor,TCGA_maf))
+maf_IBC_Tumor <- subsetMaf(maf_Tumor,clinQuery = "Group == 'IBC'")
+maf_Tumor_FAH <- subsetMaf(maf_Tumor,clinQuery = "Cohort == 'FAH'")
+maf_IBC_TCGA <- subsetMaf(maf_Tumor,clinQuery = "Group == 'IBC'|Cohort == 'TCGA-BRCA'")
+maf_nonIBC_Tumor <- merge_mafs(c(maf_nonIBC_Tumor,TCGA_maf))
+maf_nonIBC_Tumor_FAH <- subsetMaf(maf_nonIBC_Tumor,clinQuery = "Cohort == 'FAH'")
+maf_nonIBC_Tumor_TCGA <- subsetMaf(maf_nonIBC_Tumor,clinQuery = "Cohort == 'TCGA-BRCA'")
+
+
+maf_IBC_Tumor_driver <- subsetMaf(maf_IBC_Tumor,genes = cosmic_hallmark_driver_genes)
+maf_nonIBC_Tumor_driver <- subsetMaf(maf_nonIBC_Tumor,genes = cosmic_hallmark_driver_genes)
+maf_Tumor_driver <- merge_mafs(c(maf_IBC_Tumor_driver,maf_nonIBC_Tumor_driver))
+
+maf_IBC_Tumor_driver_df <- maf_IBC_Tumor_driver@data
+maf_IBC_Tumor_driver_df <- spread(maf_IBC_Tumor_driver_df,Tumor_Sample_Barcode,Variant_Classification)
+
+maf_nonIBC_Tumor_driver_df <- maf_nonIBC_Tumor_driver@data
+
+## 1.5 Plot maf summary ####
+plotmafSummary(maf = maf_IBC_Tumor, rmOutlier = TRUE, addStat = 'median', dashboard = TRUE, titvRaw = FALSE)
+plotmafSummary(maf = maf_nonIBC_Tumor, rmOutlier = TRUE, addStat = 'median', dashboard = TRUE, titvRaw = FALSE)
+
+maf_IBC_Tumor_df <- as.data.frame(maf_IBC_Tumor@data)
+maf_nonIBC_Tumor_df <- as.data.frame(maf_nonIBC_Tumor@data)
+
+## 1.6 Create oncoplot ####
+# 1.6.1 create plot
+png(filename = paste0("maf_nonIBC_Skin",".png"),
+    width = 1600,  
+    height = 2000,   
+    units = "px",     
+    bg = "white" 
+    ,res = 200 
+) 
+
+# 1.6.2 plot size 8x9
+oncoplot(maf = maf_Tumor,
+         top = 20,
+         showTumorSampleBarcodes = F,
+         sampleOrder = col_anno$sample,
+         clinicalFeatures = c('Group',
+                              #'Tissue',
+                              "Subtype",
+                              #"ER",
+                              "Cohort"
+         ),
+         genes = mutsigCV_res$gene,
+         draw_titv = F,
+         colors = vc_cols,
+         annotationColor = annocolors,
+         writeMatrix = FALSE)
+
+oncoplot(maf = maf_IBC_Tumor,
+         top = 20,
+         showTumorSampleBarcodes = F,
+         sampleOrder = col_anno$sample,
+         clinicalFeatures = c(#'Group',
+           #'Tissue',
+           "Subtype"
+           #"ER"
+         ),
+         draw_titv = F,
+         colors = vc_cols,
+         annotationColor = annocolors,
+         writeMatrix = T)
+
+oncoplot(maf = maf_nonIBC_Tumor,
+         top = 20,
+         showTumorSampleBarcodes = F,
+         #sampleOrder = col_anno$sample,
+         clinicalFeatures = c(#'Group',
+           #'Tissue',
+           "Subtype"
+           #"ER"
+         ),
+         draw_titv = F,
+         colors = vc_cols,
+         annotationColor = annocolors,
+         writeMatrix = T)
+
+oncoplot(maf = maf_IBC_Tumor_driver,
+         top = 20,
+         #top = length(maf_IBC_Tumor_driver_df$Hugo_Symbol),
+         showTumorSampleBarcodes = F,
+         sampleOrder = col_anno$sample,
+         clinicalFeatures = c(#'Group',
+           #'Tissue',
+           "Subtype"
+           #"ER"
+         ),
+         draw_titv = F,
+         colors = vc_cols,
+         annotationColor = annocolors,
+         writeMatrix = T)
+
+oncoplot(maf = maf_nonIBC_Tumor_driver,
+         top = 20,
+         #top = length(maf_nonIBC_Tumor_driver_df$Hugo_Symbol),
+         showTumorSampleBarcodes = F,
+         #sampleOrder = col_anno$sample,
+         clinicalFeatures = c(#'Group',
+           #'Tissue',
+           "Subtype"
+           #"ER"
+         ),
+         draw_titv = F,
+         colors = vc_cols,
+         annotationColor = annocolors,
+         writeMatrix = T)
+
+oncoplot(maf = maf_Tumor_driver,
+         top = 20,
+         showTumorSampleBarcodes = F,
+         #sampleOrder = col_anno$sample,
+         clinicalFeatures = c('Group',
+                              #'Tissue',
+                              "Subtype"
+                              #""
+         ),
+         draw_titv = F,
+         colors = vc_cols,
+         annotationColor = annocolors,
+         sortByAnnotation = T,
+         writeMatrix = FALSE)
+
+# 1.6.3 close plot
+dev.off()
+
+# If: Error in plot.new() : figure margins too large 
+par("mar")
+par(mar=c(1,1,1,1))
+
+## 1.7 TMb box plot####
+# 5x3.5
+ggplot(col_anno,aes(x=Group,y=TMB,fill=Group)) + 
+  stat_boxplot(geom = "errorbar",width=0.5) +
+  geom_boxplot(width=0.5) + 
+  theme_bw() + 
+  RotatedAxis() +
+  stat_compare_means(comparisons = list(c("IBC","nonIBC")),
+                     method = "wilcox.test",size=5,angle=0,vjust = 2)+
+  scale_fill_manual(values = c("#FFBE7A","#8ECFC9"))+
+  labs(x='Group', y='Mutation rate per MB', title="All Subtypes")+
+  theme_bw() + theme(panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                     panel.grid.major.x = element_blank(),
+                     panel.grid.minor.x = element_blank())
+
+#Subtype: TNBC; HER2+; HR+HER2-
+ggplot(subset(col_anno,Subtype=="TNBC"),aes(x=Group,y=TMB,fill=Group)) + 
+  stat_boxplot(geom = "errorbar",width=0.5) +
+  geom_boxplot(width=0.5) + 
+  theme_bw() + 
+  RotatedAxis() +
+  stat_compare_means(comparisons = list(c("IBC","nonIBC")),
+                     method = "wilcox.test",size=5,angle=0,vjust = 2)+
+  scale_fill_manual(values = c("#FFBE7A","#8ECFC9"))+
+  labs(x='Group', y='Mutation rate per MB', title="TNBC")+
+  theme_bw() + theme(panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                     panel.grid.major.x = element_blank(),
+                     panel.grid.minor.x = element_blank())
+
+## 1.8 Transition versus Transversion mutations ####
+IBC_T.titv = titv(maf = maf_IBC_Tumor, plot = T, useSyn = TRUE)
+IBC_T.titv_rawcounts <- IBC_T.titv$raw.counts
+IBC_T.titv_rawcounts$group <- "IBC"
+IBC_T_titv <- IBC_T.titv$TiTv.fractions
+IBC_T_titv$group <- "IBC"
+
+nonIBC_T.titv = titv(maf = maf_nonIBC_Tumor, plot = T, useSyn = TRUE)
+nonIBC_T.titv_rawcounts <- nonIBC_T.titv$raw.counts
+nonIBC_T.titv_rawcounts$group <- "nonIBC"
+nonIBC_T_titv <- nonIBC_T.titv$TiTv.fractions
+nonIBC_T_titv$group <- "nonIBC"
+
+titv_rawcounts <- rbind(IBC_T.titv_rawcounts,nonIBC_T.titv_rawcounts)
+
+# titv frations
+titv_rawcounts$sum <- rowSums(titv_rawcounts[,2:7])
+titv_rawcounts[,2:7] <- round(titv_rawcounts[,2:7]/titv_rawcounts$sum,3)
+titv_rawcounts$sum <- NULL
+
+titv_rawcounts_melt <- melt(titv_rawcounts, id.vars = c("Tumor_Sample_Barcode","group"), variable.name="SNP", value.name = "raw_count")
+
+TiTv.fractions <-rbind(IBC_T_titv,nonIBC_T_titv)
+TiTv.fractions_melt <- melt(TiTv.fractions, id.vars = c("Tumor_Sample_Barcode","group"), variable.name="titv", value.name = "TiTv.fractions")
+TiTv.fractions_melt$titv <- as.character(TiTv.fractions_melt$titv)
+TiTv.fractions_melt$titv[which(TiTv.fractions_melt$titv=="Ti")] <- "Transitions"
+TiTv.fractions_melt$titv[which(TiTv.fractions_melt$titv=="Tv")] <- "Transversions"
+
+# 5x6
+ggplot(titv_rawcounts_melt,aes(x=group,y=raw_count,fill=group)) + 
+  facet_wrap(~SNP)+
+  stat_boxplot(geom = "errorbar",width=0.5) +
+  geom_boxplot(width=0.5) + 
+  theme_bw() + 
+  RotatedAxis() +
+  stat_compare_means(comparisons = list(c("IBC","nonIBC")),
+                     method = "wilcox.test",size=5,angle=0,vjust = 2)+
+  scale_fill_manual(values = c("#FFBE7A","#8ECFC9"))+
+  
+  labs(x='SNP', y='Mutation counts', title="")
+
+ggplot(TiTv.fractions_melt,aes(x=group,y=TiTv.fractions,fill=group)) + 
+  facet_wrap(~titv)+
+  stat_boxplot(geom = "errorbar",width=0.5) +
+  geom_boxplot(width=0.5) + 
+  theme_bw() + 
+  RotatedAxis() +
+  stat_compare_means(comparisons = list(c("IBC","nonIBC")),
+    method = "wilcox.test",size=5,angle=0,vjust = 2)+
+  scale_fill_manual(values = c("#FFBE7A","#8ECFC9"))+
+  labs(x='', y='', title="")+
+  theme_bw() + theme(panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                     panel.grid.major.x = element_blank(),
+                     panel.grid.minor.x = element_blank())
+
+
+# 5x5
+laml.mutload = tcgaCompare(maf = maf_IBC_Tumor, tcga_cohorts="BRCA",cohortName = 'IBC', logscale = TRUE, capture_size = 50)
+laml.mutload = tcgaCompare(maf = maf_nonIBC_Tumor, tcga_cohorts="BRCA", cohortName = 'nonIBC', logscale = TRUE, capture_size = 50)
+
+## 1.9 Somatic Interactions top25(6x6) top50(x) ####
+somaticInteractions(maf = maf_IBC_Tumor, top = 25, pvalue = c(0.05, 0.1))
+somaticInteractions(maf = maf_nonIBC_Tumor, top = 25, pvalue = c(0.05, 0.1))
+
+## 1.10 ClinicalEnrichment ####
+Tumor.ce = clinicalEnrichment(maf = maf_Tumor, clinicalFeature = 'Group')
+plotEnrichmentResults(enrich_res = Tumor.ce, pVal = 0.05, geneFontSize = 1, annoFontSize = 0.6)
+
+## 1.11 OncogenicPathways 5x6 ####
+OncogenicPathways(maf = maf_IBC_Tumor)
+OncogenicPathways(maf = maf_Tumor_FAH)
+OncogenicPathways(maf = maf_nonIBC_Tumor)
+
+IBC_OncoPathways <- OncogenicPathways(maf = maf_IBC_Tumor)
+
+nonIBC_OncoPathways<- OncogenicPathways(maf = maf_nonIBC_Tumor)
+nonIBC_OncoPathways<- OncogenicPathways(maf = maf_nonIBC_Tumor_FAH)
+nonIBC_OncoPathways<- OncogenicPathways(maf = maf_nonIBC_Tumor_TCGA)
+
+IBC_OncoPathways$group <- "IBC"
+nonIBC_OncoPathways$group <- "nonIBC"
+
+All_OncogenicPathways <- rbind(IBC_OncoPathways,nonIBC_OncoPathways)
+All_OncogenicPathways$Unmutated_samples <- 15
+
+All_OncogenicPathways$Unmutated_samples[which(All_OncogenicPathways$group=="nonIBC")] <- 45
+All_OncogenicPathways$Unmutated_samples[which(All_OncogenicPathways$group=="nonIBC")] <- 12
+All_OncogenicPathways$Unmutated_samples[which(All_OncogenicPathways$group=="nonIBC")] <- 33
+
+All_OncogenicPathways_fisher_input <- All_OncogenicPathways[,c("group","Pathway","Mutated_samples")]
+All_OncogenicPathways_fisher_input <- spread(All_OncogenicPathways_fisher_input,group,Mutated_samples) 
+All_OncogenicPathways_fisher_input[is.na(All_OncogenicPathways_fisher_input)] <- 0
+rownames(All_OncogenicPathways_fisher_input) <- All_OncogenicPathways_fisher_input$Pathway
+colnames(All_OncogenicPathways_fisher_input) <- c("Pathway","IBC_mutated_samples","nonIBC_mutated_samples")
+All_OncogenicPathways_fisher_input$IBC_unmutated_samples <- 15-All_OncogenicPathways_fisher_input$IBC_mutated_samples
+
+All_OncogenicPathways_fisher_input$nonIBC_unmutated_samples <- 45-All_OncogenicPathways_fisher_input$nonIBC_mutated_samples
+All_OncogenicPathways_fisher_input$nonIBC_unmutated_samples <- 12-All_OncogenicPathways_fisher_input$nonIBC_mutated_samples
+All_OncogenicPathways_fisher_input$nonIBC_unmutated_samples <- 33-All_OncogenicPathways_fisher_input$nonIBC_mutated_samples
+
+All_OncogenicPathways_fisher_input <- All_OncogenicPathways_fisher_input[,c(1,2,4,3,5)]
+
+out <- data.frame()
+for (i in 1:nrow(All_OncogenicPathways_fisher_input)){
+  t <- fisher.test(matrix(as.vector(t(All_OncogenicPathways_fisher_input[i, 2:5])), ncol=2))
+  d <- All_OncogenicPathways_fisher_input[i, ]
+  d$p.value <- t$p.value
+  d$OR <- t$estimate[[1]]
+  d$OR.lower95 <- t$conf.int[1]
+  d$OR.upper95 <- t$conf.int[2]
+  out <- rbind(out, d)
+}
+out <- subset(out,p.value<0.05)
+write.table(out,"D:/bioinfo/project/IBC_Skin/output_files/WES/IBC_nonIBC_WES_pathway_fisher_res.txt",row.names = T,col.names = T,sep = '\t',quote = F)
+
+ggplot(subset(All_OncogenicPathways), 
+       aes(x = factor(Pathway,levels = unique(Pathway)),        
+           y = ifelse(group == "IBC", Fraction_mutated_samples, -Fraction_mutated_samples),
+           fill = group)) +
+  geom_bar(stat = 'identity')+                           
+  coord_flip()+                                             
+  geom_text(aes(label=round(Fraction_mutated_samples,2),      
+                hjust = ifelse(group == "IBC", -.4, 1.1)),  
+            size=4)+
+  scale_y_continuous(                                      
+    labels = abs,                                            
+    expand = expansion(mult = c(0.1, 0.1)))+                   
+  scale_fill_manual(values = c("#FFBE7A","#8ECFC9"))+
+  theme_bw()+ theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+
+  labs(x='Oncogenic pathways', y='Fraction of samples affected', title="")
+
+
+# 5x4
+PlotOncogenicPathways(maf = maf_IBC_Tumor, pathways = "RTK-RAS", removeNonMutated = F, showTumorSampleBarcodes = T)
+PlotOncogenicPathways(maf = maf_nonIBC_Tumor, pathways = "RTK-RAS",removeNonMutated = F, showTumorSampleBarcodes = T)
+
+PlotOncogenicPathways(maf = maf_IBC_Tumor, pathways = "TP53")
+PlotOncogenicPathways(maf = maf_nonIBC_Tumor, pathways = "TP53")
+
+## 1.12 DrugInteractions ####
+IBC_dgi = drugInteractions(maf = maf_IBC_Tumor, fontSize = 0.75)
+nonIBC_dgi = drugInteractions(maf = maf_nonIBC_Tumor, fontSize = 0.75)
+
+
+## 1.13 APOBEC enrichment scores & create matrix for mutational signature analysis ####
+IBC.tnm <- trinucleotideMatrix(maf=maf_IBC_Tumor, ref_genome="BSgenome.Hsapiens.UCSC.hg19")
+nonIBC.tnm <- trinucleotideMatrix(maf=maf_nonIBC_Tumor, ref_genome="BSgenome.Hsapiens.UCSC.hg19")
+all.tnm <- trinucleotideMatrix(maf=maf_Tumor, ref_genome="BSgenome.Hsapiens.UCSC.hg19")
+
+
+IBC_apobec_enrich <- plotApobecDiff(tnm=IBC.tnm, maf=maf_IBC_Tumor,pVal=0.05)
+nonIBC_apobec_enrich <- plotApobecDiff(tnm=nonIBC.tnm, maf=maf_nonIBC_Tumor, pVal = 0.05)
+all_apobec_enrich <- plotApobecDiff(tnm=all.tnm, maf=maf_Tumor,pVal=0.05)
+
+## 1.14 Mutational signature analysis by Maftools ####
+IBC.sign <- extractSignatures(mat = IBC.tnm, 
+                              n = 10, #Default NULL
+                              plotBestFitRes = T
+)
+plotSignatures(IBC.sign)
+
+IBC.se <- signatureEnrichment(maf=maf_IBC_Tumor, sig_res=IBC.sign)
+
+## 1.15 Calculating fisher's exact score of mutations between IBC and nonIBC ####
+IBC_Tumor_driver <- read.table("D:/bioinfo/project/IBC_Skin/R_base/15_IBC_Tumor_driver_onco_matrix.txt",header = T,sep = '\t',row.names = 1)
+nonIBC_Tumor_driver <- read.table("D:/bioinfo/project/IBC_Skin/R_base/38_nonIBC_Tumor_driver_onco_matrix.txt",header = T,sep = '\t',row.names = 1)
+
+IBC_Tumor_driver <- read.table("IBC_Top107_onco_matrix.txt",header = T,sep = '\t',row.names = 1)
+nonIBC_Tumor_driver <- read.table("nonIBC_Top250_onco_matrix.txt",header = T,sep = '\t',row.names = 1)
+
+table(rownames(IBC_Tumor_driver) %in% rownames(nonIBC_Tumor_driver))
+
+IBC_unique_driver <- rownames(IBC_Tumor_driver)[-which(rownames(IBC_Tumor_driver) %in% rownames(nonIBC_Tumor_driver))]
+nonIBC_unique_driver <- rownames(nonIBC_Tumor_driver)[-which(rownames(nonIBC_Tumor_driver) %in% rownames(IBC_Tumor_driver))]
+
+tmp1 <- data.frame(matrix(ncol = ncol(nonIBC_Tumor_driver),nrow = length(IBC_unique_driver)))
+rownames(tmp1) <- IBC_unique_driver
+colnames(tmp1) <- colnames(nonIBC_Tumor_driver)
+
+tmp2 <- data.frame(matrix(ncol = ncol(IBC_Tumor_driver),nrow = length(nonIBC_unique_driver)))
+rownames(tmp2) <- nonIBC_unique_driver
+colnames(tmp2) <- colnames(IBC_Tumor_driver)
+
+nonIBC_Tumor_driver <- rbind(nonIBC_Tumor_driver,tmp1)
+IBC_Tumor_driver <- rbind(IBC_Tumor_driver,tmp2)
+
+nrow(nonIBC_Tumor_driver)
+nrow(IBC_Tumor_driver)
+
+IBC_Tumor_driver[is.na(IBC_Tumor_driver)] <- ""
+IBC_Tumor_driver <- IBC_Tumor_driver %>% mutate_all(~ifelse(. == "", 0, .))
+IBC_Tumor_driver <- IBC_Tumor_driver %>% mutate_all(~ifelse(. != 0, 1, .))
+IBC_Tumor_driver_df <- apply(IBC_Tumor_driver, 2, as.numeric)
+IBC_Tumor_driver_df <- as.data.frame(IBC_Tumor_driver_df)
+rownames(IBC_Tumor_driver_df) <- rownames(IBC_Tumor_driver)
+IBC_Tumor_driver_sum <- data.frame(row.names = rownames(IBC_Tumor_driver_df), IBC_Mut=rowSums(IBC_Tumor_driver_df), IBC_nonMut=15-rowSums(IBC_Tumor_driver_df))
+
+nonIBC_Tumor_driver[is.na(nonIBC_Tumor_driver)] <- ""
+nonIBC_Tumor_driver <- nonIBC_Tumor_driver %>% mutate_all(~ifelse(. == "", 0, .))
+nonIBC_Tumor_driver <- nonIBC_Tumor_driver %>% mutate_all(~ifelse(. != 0, 1, .))
+nonIBC_Tumor_driver_df <- apply(nonIBC_Tumor_driver, 2, as.numeric)
+nonIBC_Tumor_driver_df <- as.data.frame(nonIBC_Tumor_driver_df)
+rownames(nonIBC_Tumor_driver_df) <- rownames(nonIBC_Tumor_driver)
+nonIBC_Tumor_driver_sum <- data.frame(row.names = rownames(nonIBC_Tumor_driver_df), IBC_Mut=rowSums(nonIBC_Tumor_driver_df), IBC_nonMut=38-rowSums(nonIBC_Tumor_driver_df))
+
+Tumor_driver_sum <- cbind(IBC_Tumor_driver_sum,nonIBC_Tumor_driver_sum)
+
+Tumor_driver_sum_fisher_output <- data.frame()
+for (i in 1:nrow(Tumor_driver_sum)){
+  t <- fisher.test(matrix(as.vector(t(Tumor_driver_sum[i, 1:4])), ncol=2))
+  d <- Tumor_driver_sum[i, ]
+  d$p.value <- t$p.value
+  d$OR <- t$estimate[[1]]
+  d$OR.lower95 <- t$conf.int[1]
+  d$OR.upper95 <- t$conf.int[2]
+  Tumor_driver_sum_fisher_output <- rbind(Tumor_driver_sum_fisher_output, d)
+}
+Tumor_driver_sum_fisher_output <- subset(Tumor_driver_sum_fisher_output,p.value<0.05)
+
+## 1.16 MSI plot ####
+msi_df <- read.table("D:/bioinfo/project/IBC_Skin/output_files/WES/msi/msi.txt",header = T,sep = "\t")
+msi_df$MSI <- as.numeric(msi_df$MSI)
+rownames(msi_df) <- msi_df$barcode
+
+#3.5x5
+ggplot(msi_df,aes(x=group,y=MSI,fill=group)) + 
+  stat_boxplot(geom = "errorbar",width=0.5) +
+  geom_boxplot(width=0.5) + 
+  RotatedAxis() +
+  scale_fill_manual(values = c("#FFBE7A","#8ECFC9"))+
+  theme_bw()+ theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+
+  stat_compare_means(method = "wilcox.test",size=5,angle=0,vjust = 2)+
+  labs(x='', y='MSI score', title="")
+
+geom_signif(comparisons = list(c("group")),test = "wilcox.test")
+
+
+## 1.17 Manta SV ####
+IBC.sv <- read.table("D:/bioinfo/project/IBC_Skin/output_files/WES/Manta/15IBC.annotated.filtered.vcf",comment.char = "#", sep = '\t', header = F)
+nonIBC.sv <- read.table("D:/bioinfo/project/IBC_Skin/output_files/WES/Manta/5nonIBC.annotated.filtered.vcf",comment.char = "#", sep = '\t', header = F)
+TCGA.sv <- read.table("D:/bioinfo/project/IBC_Skin/output_files/WES/Manta/33TCGA.annotated.filtered.vcf",comment.char = "#", sep = '\t', header = F)
+
+IBC.sv <- na.omit(IBC.sv)
+IBC.sv <- IBC.sv[,-(10:11)]
+colnames(IBC.sv) <- c("CHROM","POS","ID","REF","ALT","QUAL","FILTER","INFO","FORMAT","Sample_ID")
+IBC.sv$SV_type <- substr(IBC.sv$ID,6,8)
+IBC.sv$SV_type[which(IBC.sv$SV_type=="BND")] <- "Translocation"
+IBC.sv$SV_type[which(IBC.sv$SV_type=="DEL")] <- "Deletion"
+IBC.sv$SV_type[which(IBC.sv$SV_type=="DUP")] <- "Tandem Duplicate"
+IBC.sv$SV_type[which(IBC.sv$SV_type=="INS")] <- "Insertion"
+IBC.sv$SV_type[which(IBC.sv$SV_type=="INV")] <- "Inversion"
+IBC.sv$Gene <- NA
+for (i in 1:nrow(IBC.sv)){
+  geneid <- gsub("GENE=","",unlist(strsplit(IBC.sv[i,"INFO"],";"))[grep("GENE=", unlist(strsplit(IBC.sv[i,"INFO"],";")))])
+  if (length(geneid)>0){
+    IBC.sv[i,"Gene"] <- geneid
+  } 
+}
+
+nonIBC.sv <- na.omit(nonIBC.sv)
+nonIBC.sv <- nonIBC.sv[,-(10:11)]
+colnames(nonIBC.sv) <- c("CHROM","POS","ID","REF","ALT","QUAL","FILTER","INFO","FORMAT","Sample_ID")
+nonIBC.sv$SV_type <- substr(nonIBC.sv$ID,6,8)
+nonIBC.sv$SV_type[which(nonIBC.sv$SV_type=="BND")] <- "Translocation"
+nonIBC.sv$SV_type[which(nonIBC.sv$SV_type=="DEL")] <- "Deletion"
+nonIBC.sv$SV_type[which(nonIBC.sv$SV_type=="DUP")] <- "Tandem Duplicate"
+nonIBC.sv$SV_type[which(nonIBC.sv$SV_type=="INS")] <- "Insertion"
+nonIBC.sv$SV_type[which(nonIBC.sv$SV_type=="INV")] <- "Inversion"
+nonIBC.sv$Gene <- NA
+for (i in 1:nrow(nonIBC.sv)){
+  geneid <- gsub("GENE=","",unlist(strsplit(nonIBC.sv[i,"INFO"],";"))[grep("GENE=", unlist(strsplit(nonIBC.sv[i,"INFO"],";")))])
+  if (length(geneid)>0){
+    nonIBC.sv[i,"Gene"] <- geneid
+  } 
+}
+
+TCGA.sv <- na.omit(TCGA.sv)
+TCGA.sv <- TCGA.sv[,-(10:11)]
+colnames(TCGA.sv) <- c("CHROM","POS","ID","REF","ALT","QUAL","FILTER","INFO","FORMAT","Sample_ID")
+TCGA.sv$SV_type <- substr(TCGA.sv$ID,6,8)
+TCGA.sv$SV_type[which(TCGA.sv$SV_type=="BND")] <- "Translocation"
+TCGA.sv$SV_type[which(TCGA.sv$SV_type=="DEL")] <- "Deletion"
+TCGA.sv$SV_type[which(TCGA.sv$SV_type=="DUP")] <- "Tandem Duplicate"
+TCGA.sv$SV_type[which(TCGA.sv$SV_type=="INS")] <- "Insertion"
+TCGA.sv$SV_type[which(TCGA.sv$SV_type=="INV")] <- "Inversion"
+TCGA.sv$Gene <- NA
+for (i in 1:nrow(TCGA.sv)){
+  geneid <- gsub("GENE=","",unlist(strsplit(TCGA.sv[i,"INFO"],";"))[grep("GENE=", unlist(strsplit(TCGA.sv[i,"INFO"],";")))])
+  if (length(geneid)>0){
+    TCGA.sv[i,"Gene"] <- geneid
+  } 
+}
+
+
+#IBC
+IBC.sv$Sample_ID <- substr(IBC.sv$Sample_ID,1,5)
+#nonIBC
+nonIBC.sv$Sample_ID <- substr(nonIBC.sv$Sample_ID,1,8)
+
+all.sv <- rbind(IBC.sv,nonIBC.sv,TCGA.sv)
+
+IBC_order <- as.data.frame(table(IBC.sv$Sample_ID))
+IBC_order <- IBC_order[order(IBC_order$Freq, decreasing = T),]
+IBC_order$Var1 <- factor(IBC_order$Var1,levels=as.character(IBC_order$Var1))
+IBC.sv$Sample_ID <- factor(IBC.sv$Sample_ID, levels=as.character(IBC_order$Var1))
+IBC.sv <- IBC.sv[order(IBC.sv$Sample_ID),]
+colnames(IBC.sv)[which(colnames(IBC.sv)=="SV_type")]<-"Structural variant types"
+
+nonIBC_order <- as.data.frame(table(nonIBC.sv$Sample_ID))
+nonIBC_order <- nonIBC_order[order(nonIBC_order$Freq, decreasing = T),]
+nonIBC_order$Var1 <- factor(nonIBC_order$Var1,levels=as.character(nonIBC_order$Var1))
+nonIBC.sv$Sample_ID <- factor(nonIBC.sv$Sample_ID, levels=as.character(nonIBC_order$Var1))
+nonIBC.sv <- nonIBC.sv[order(nonIBC.sv$Sample_ID),]
+colnames(nonIBC.sv)[which(colnames(nonIBC.sv)=="SV_type")]<-"Structural variant types"
+
+TCGA_order <- as.data.frame(table(TCGA.sv$Sample_ID))
+TCGA_order <- TCGA_order[order(TCGA_order$Freq, decreasing = T),]
+TCGA_order$Var1 <- factor(TCGA_order$Var1,levels=as.character(TCGA_order$Var1))
+TCGA.sv$Sample_ID <- factor(TCGA.sv$Sample_ID, levels=as.character(TCGA_order$Var1))
+TCGA.sv <- TCGA.sv[order(TCGA.sv$Sample_ID),]
+colnames(TCGA.sv)[which(colnames(TCGA.sv)=="SV_type")]<-"Structural variant types"
+
+# 6x9
+ggplot(TCGA.sv, mapping=aes(x=Sample_ID, 
+                            #y=value, 
+                            stat="count",
+                            fill=`Structural variant types`)) +
+  geom_bar()+
+  theme_bw()+
+  #theme(panel.background = element_rect(fill = "#8dd3c7" ))+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+
+  scale_fill_manual(values=c(Deletion = "#386cb0", Insertion = "#ffff99", Inversion = "#fdc086" , `Tandem Duplicate` = "#beaed4", Translocation = "#7fc97f"))+
+  #scale_fill_manual(values=c(Deletion = "#252525", Insertion = "#636363", Inversion = "#969696" , `Tandem Duplicate` = "#cccccc", Translocation = "#f7f7f7"))+
+  labs(x="nonIBC", y="Number of somatic SV", fill="Structural variant types") +
+  theme(axis.text.x = element_text(angle = 90,size = 10))+
+  theme(legend.position = c(0.83, 0.76))+
+  theme(legend.background = element_rect(color = "black"))+
+  theme(legend.text = element_text(size = 12))+
+  #theme_bw() + 
+  theme(panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank())
+
+
+IBC_sv.fraction <- as.data.frame(table(IBC.sv$Sample_ID,IBC.sv$`Structural variant types`))
+IBC_sv.fraction$group <- "IBC"
+
+nonIBC_sv.fraction <- as.data.frame(table(nonIBC.sv$Sample_ID,nonIBC.sv$`Structural variant types`))
+nonIBC_sv.fraction$group <- "non-IBC"
+
+TCGA_sv.fraction <- as.data.frame(table(TCGA.sv$Sample_ID,TCGA.sv$`Structural variant types`))
+TCGA_sv.fraction$group <- "non-IBC"
+
+sv.fraction <- rbind(IBC_sv.fraction,nonIBC_sv.fraction,TCGA_sv.fraction)
+
+sv.fraction_wide <- spread(sv.fraction,Var2,Freq)
+sv.fraction_wide$Insertion[is.na(sv.fraction_wide$Insertion)]<-0
+sv.fraction_wide$sum <- rowSums(sv.fraction_wide[,3:7])
+
+for (i in 3:7){
+  sv.fraction_wide[i] <- sv.fraction_wide[i]/sv.fraction_wide[8]
+}
+
+sv.fraction_melt <- melt(sv.fraction_wide,measure.vars = c("Deletion","Insertion","Tandem Duplicate","Translocation","Inversion"),variable.name = "Structural variant types",value.name = "Fraction")
+
+#8x6
+ggplot(sv.fraction_melt,aes(x=group,y=Fraction,fill=group)) + 
+  facet_wrap(~`Structural variant types`)+
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1))+
+  stat_boxplot(geom = "errorbar",width=0.5) +
+  geom_boxplot(width=0.5) + 
+  #geom_jitter(aes(Gene_Symbol, Gene_Expression, fill=group),position=position_jitter(width = 0.25, height=0),alpha=0.5,size=0.8)+
+  theme_bw() + 
+  RotatedAxis() +
+  theme(text = element_text(size = 14))+
+  scale_fill_manual(values = c("#FFBE7A","#8ECFC9"))+
+  stat_compare_means(method = "wilcox.test",
+                     comparisons = list(c("IBC","non-IBC")),
+                     size=4,angle=0,vjust = 2)+ #,aes(label = ..p.signif..)
+  labs(x='', y='Fraction', title="") +
+  theme_bw() + theme(panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                     panel.grid.major.x = element_blank(),
+                     panel.grid.minor.x = element_blank())
+
+# select deletion and tandem duplicate
+unique(all.sv$`Structural variant types`)
+all.sv <- na.omit(all.sv)
+all.sv <- subset(all.sv,`Structural variant types` %in% c("Deletion","Tandem Duplicate"))
+
+all.sv$Group <- "IBC"
+all.sv$Group[grep("nonIBC",all.sv$Sample_ID)] <- "non-IBC"
+all.sv$Group[grep("TCGA",all.sv$Sample_ID)] <- "non-IBC"
+
+all.del <- subset(all.sv, `Structural variant types` %in% c("Deletion"))
+duplicated_rows <- duplicated(all.del[, c("Sample_ID", "Gene")])
+all.del <- all.del[!duplicated_rows,]
+
+all.td <- subset(all.sv, `Structural variant types` %in% c("Tandem Duplicate"))
+duplicated_rows <- duplicated(all.td[, c("Sample_ID", "Gene")])
+all.td <- all.td[!duplicated_rows,]
+
+all.del.gene <- as.data.frame(table(all.del$Group,all.del$Gene))
+colnames(all.del.gene) <- c("Group", "Gene","Count")
+all.del.gene_wide <- spread(all.del.gene,Gene,Count)
+rownames(all.del.gene_wide) <- all.del.gene_wide$Group
+all.del.gene_wide$Group <- NULL
+all.del.gene_wide <- as.data.frame(t(all.del.gene_wide))
+
+
+all.td.gene <- as.data.frame(table(all.td$Group,all.td$Gene))
+colnames(all.td.gene) <- c("Group", "Gene","Count")
+all.td.gene_wide <- spread(all.td.gene,Gene,Count)
+rownames(all.td.gene_wide) <- all.td.gene_wide$Group
+all.td.gene_wide$Group <- NULL
+all.td.gene_wide <- as.data.frame(t(all.td.gene_wide))
+
+
+all.del.gene_wide$IBC_noDel <- 15-all.del.gene_wide$IBC
+all.del.gene_wide$nonIBC_noDel <- 38-all.del.gene_wide$`non-IBC`
+colnames(all.del.gene_wide)[1:2] <- c("IBC_del","nonIBC_del")
+
+all.del.gene_fisher <- data.frame()
+for (i in 1:nrow(all.del.gene_wide)){
+  t <- fisher.test(matrix(as.vector(t(all.del.gene_wide[i, 1:4])), ncol=2))
+  d <- all.del.gene_wide[i, ]
+  d$p.value <- t$p.value
+  d$OR <- t$estimate[[1]]
+  d$OR.lower95 <- t$conf.int[1]
+  d$OR.upper95 <- t$conf.int[2]
+  all.del.gene_fisher <- rbind(all.del.gene_fisher, d)
+}
+all.del.gene_fisher <- subset(all.del.gene_fisher,p.value<0.05)
+
+
+all.td.gene_wide$IBC_notd <- 15-all.td.gene_wide$IBC
+all.td.gene_wide$nonIBC_notd <- 38-all.td.gene_wide$`non-IBC`
+colnames(all.td.gene_wide)[1:2] <- c("IBC_td","nonIBC_td")
+
+all.td.gene_fisher <- data.frame()
+for (i in 1:nrow(all.td.gene_wide)){
+  t <- fisher.test(matrix(as.vector(t(all.td.gene_wide[i, 1:4])), ncol=2))
+  d <- all.td.gene_wide[i, ]
+  d$p.value <- t$p.value
+  d$OR <- t$estimate[[1]]
+  d$OR.lower95 <- t$conf.int[1]
+  d$OR.upper95 <- t$conf.int[2]
+  all.td.gene_fisher <- rbind(all.td.gene_fisher, d)
+}
+all.td.gene_fisher <- subset(all.td.gene_fisher,p.value<0.05)
+
+write.table(all.del.gene_fisher, "D:/bioinfo/project/IBC_Skin/output_files/WES/Manta/all.del.gene_fisher.txt",col.names = T,row.names = T,sep = '\t',quote = F)
+
+## 1.18 COSMIC Mutation signature by deconstructSigs ####
+IBC_maf <- read.table("D:/bioinfo/project/IBC_Skin/output_files/WES/all.maf",header = T,sep = '\t',fill = T,quote = "")
+
+TCGA_maf <- read.table("D:/bioinfo/project/IBC_Skin/input_files/TCGA_BRCA_asian.maf",row.names = 1,header = T,sep = '\t',fill = T)
+TCGA_maf$Chromosome <- paste0("chr",TCGA_maf$Chromosome)
+BRCA_clinical <- readRDS("D:/bioinfo/database/TCGA_BRCA/TCGA_BRCA_clinical_2022.11.16.rds")
+patient_info <- readRDS("TCGA_BRCA_33asian.rds")
+# TCGA_clinical <- readRDS("D:/bioinfo/project/IBC_Skin/input_files/TCGA_BRCA_asian_clinical.rds")
+# TCGA_clinical <- subset(TCGA_clinical, paper_BRCA_Subtype_PAM50 != "LumA")
+# TCGA_clinical <- subset(TCGA_clinical, paper_BRCA_Subtype_PAM50 != "Normal")
+# TCGA_clinical <- subset(TCGA_clinical, sample %in% TCGA_col_anno$Patient)
+TCGA_maf$sample <- substr(TCGA_maf$Tumor_Sample_Barcode,1,12)
+TCGA_maf <- subset(TCGA_maf, sample %in% patient_info$bcr_patient_barcode)
+TCGA_maf <- subset(TCGA_maf,Chromosome != "chrGL000209.1")
+
+maf <- merge_mafs(IBC_maf,TCGA_maf)
+
+IBC_sigs.input <- mut.to.sigs.input(mut.ref = IBC_maf, 
+                                    sample.id = "Tumor_Sample_Barcode", 
+                                    chr = "Chromosome", 
+                                    pos = "Start_Position", 
+                                    ref = "Reference_Allele", 
+                                    alt = "Tumor_Seq_Allele2",
+                                    bsg = BSgenome.Hsapiens.UCSC.hg19)
+TCGA_sigs.input <- mut.to.sigs.input(mut.ref = TCGA_maf, 
+                                     sample.id = "Tumor_Sample_Barcode", 
+                                     chr = "Chromosome", 
+                                     pos = "Start_Position", 
+                                     ref = "Reference_Allele", 
+                                     alt = "Tumor_Seq_Allele2",
+                                     bsg = BSgenome.Hsapiens.UCSC.hg19)
+
+sigs.input <- rbind(IBC_sigs.input,TCGA_sigs.input)
+
+
+# self data with TCGA data
+w=lapply(c(unique(IBC_maf$Tumor_Sample_Barcode),unique(TCGA_maf$Tumor_Sample_Barcode)) , function(i){
+  ## signatures.cosmic signatures.nature2013
+  sample_1 = whichSignatures(tumor.ref = sigs.input[,], 
+                             signatures.ref = signatures.cosmic,
+                             #signatures.ref =  signatures.nature2013,
+                             sample.id =  i, 
+                             contexts.needed = TRUE,
+                             tri.counts.method = 'default')
+  print(i)
+  return(sample_1$weights)
+})
+
+w=do.call(rbind,w)
+
+# plot heatmap
+pheatmap(t(w),
+         cluster_rows = F,
+         cluster_cols = F,
+         scale = "column")
+pheatmap(w,cluster_rows = T,cluster_cols = F)
+
+mut.wt=w
+#save(mut.wt,file = 'wgs-mut.wt.Rdata')
+
+w$sampleID <- rownames(w)
+
+# Run when self samples are merged with TCGA tumor samples
+w <- subset(w,sampleID %in% w$sampleID[-grep("-S",w$sampleID)])
+w$Group <- c(rep("IBC",15),rep("non-IBC",38))
+write.table(w,"D:/bioinfo/project/IBC_Skin/output_files/WES/deconstructSigs/deconstructSigs_COSMIC_score.txt",row.names = F,col.names = T,sep = '\t',quote = F)
+
+w_melt <- melt(w,
+               id.vars=c("sampleID","Group"),
+               #measure.vars = ,
+               variable.name = "signature_name",
+               value.name = "signature_score")
+w_melt$Group <- factor(w_melt$Group,levels = c("IBC","non-IBC"))
+w_melt <- w_melt[order(w_melt$Group),]
+
+# calculate q-value
+mut.wt <- subset(mut.wt,rownames(mut.wt) %in% rownames(mut.wt)[grep("-S",rownames(mut.wt),invert = T)])
+mut.wt$Group <- c(rep("IBC",15),rep("non-IBC",38))
+cosmic_wilcox_results <- data.frame(variable = character(),
+                                    W = numeric(),
+                                    p_value = numeric(),
+                                    q_value = numeric(),
+                                    effect_size = numeric(),
+                                    effect = character(),
+                                    stringsAsFactors = FALSE)
+variables <- colnames(mut.wt)
+
+
+for (variable in variables) {
+  result <- wilcox.test(mut.wt[[variable]] ~ mut.wt$Group)
+  effect_size <- cliff.delta(na.omit(mut.wt[[variable]][mut.wt$Group == "IBC"]), 
+                             na.omit(mut.wt[[variable]][mut.wt$Group == "non-IBC"]), 
+                             pooled = TRUE)
+  cosmic_wilcox_results <- rbind(cosmic_wilcox_results, 
+                                 data.frame(variable = variable, 
+                                            W = result$statistic, 
+                                            p_value = result$p.value,
+                                            q_value = p.adjust(result$p.value, method = "BH"),
+                                            #effect_size = abs(Z / sqrt(n1 + n2)),
+                                            effect_size = effect_size$estimate,
+                                            effect = effect_size$magnitude[1],
+                                            stringsAsFactors = FALSE))
+}
+
+cosmic_wilcox_results$q_value <- p.adjust(cosmic_wilcox_results$p_value, method = "fdr")
+
+# 8x8 box plot # 5x4
+ggplot(subset(w_melt, c(signature_name %in% c("Signature.1","Signature.3"))),aes(x=Group,y=signature_score,fill=Group)) + 
+  facet_wrap(~signature_name,scales = "free_y")+
+  stat_boxplot(geom = "errorbar",width=0.5) +
+  geom_boxplot(width=0.5) + 
+  #geom_jitter(aes(celltype, percentage, fill=group),position=position_jitter(width = 0.25, height=0),alpha=0.5,size=0.8)+
+  theme_bw() + 
+  RotatedAxis() +
+  scale_fill_manual(values = c("#EA5455","#002B5B"))+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank())+
+  stat_compare_means(
+    comparisons = list(c("IBC","non-IBC")),
+    method = "wilcox.test",size=3.5,angle=0,vjust = 2)+
+  labs(x='', y='Weights of COSMIC mutational signature', title="COSMIC Signatures in 15 IBC + 5 non-IBC + 33 TCGA non-IBC samples")
+
+
+w_melt_ss <- subset(w_melt_subset,signature_name %in% c("Signature.3","Signature.13"))
+w_melt_ss <- subset(w_melt_subset,signature_name %in% c("Signature.3"))
+
+w_melt_ss$signature_name ="HRD"
+
+ggplot(w_melt_ss,aes(x=signature_name,y=signature_score,fill=Group)) + 
+  stat_boxplot(geom = "errorbar",width=0.5) +
+  geom_boxplot(width=0.5) + 
+  #geom_jitter(aes(celltype, percentage, fill=group),position=position_jitter(width = 0.25, height=0),alpha=0.5,size=0.8)+
+  theme_bw() + 
+  RotatedAxis() +
+  #geom_signif(step_increase = 0.1, map_signif_level = F,test = wilcox.test) +
+  stat_compare_means(method = "wilcox.test",size=5,angle=0,vjust = 2)+
+  labs(x=' ', 
+       y='signature score', 
+       title="COSMIC Signature")+
+  theme(axis.text.x = element_text(size = 12, 
+                                   color = "black", 
+                                   #face = "bold", 
+                                   vjust = 0.5, hjust = 0.5, angle = 0))
+
+# plot selected signaures
+IBC_Sig <- whichSignatures(tumor.ref = IBC_sigs.input[rownames(IBC_sigs.input)[grep("-T",rownames(IBC_sigs.input))][1:15],], 
+                           signatures.ref = signatures.cosmic,
+                           #signatures.ref =  signatures.nature2013,
+                           sample.id = "IBC01-T", 
+                           contexts.needed = TRUE,
+                           tri.counts.method = 'default')
+plotSignatures(IBC_Sig)
+makePie(IBC_Sig)
+
+## 1.19 COSMIC Mutation signature by sigminer ####
+All_maf <- read_maf(maf = "D:/bioinfo/project/IBC_Skin/output_files/WES/all.maf")
+
+maf_IBC_Tumor <- subsetMaf(maf_Tumor,clinQuery = "Group == 'IBC'")
+maf_nonIBC_Tumor <- subsetMaf(maf_Tumor,clinQuery = "Group == 'nonIBC'")
+
+# Tally Genomic Alteration Objects
+mt_tally_IBC <- sig_tally(
+  maf_IBC_Tumor,
+  ref_genome = "BSgenome.Hsapiens.UCSC.hg19",
+  use_syn = TRUE,
+  mode = "SBS", # can be set as ALL/SBS
+  add_trans_bias = F
+)
+
+mt_tally_nonIBC <- sig_tally(
+  maf_nonIBC_Tumor,
+  ref_genome = "BSgenome.Hsapiens.UCSC.hg19",
+  use_syn = TRUE,
+  mode = "SBS",  # can be set as ALL/SBS
+  add_trans_bias = F
+)
+
+str(mt_tally_IBC, max.level = 1)
+str(mt_tally_nonIBC, max.level = 1)
+
+# run this with mode=ALL in the previous step
+show_catalogue(mt_tally_IBC$SBS_96 %>% t(), mode = "SBS", style = "cosmic")
+show_catalogue(mt_tally_nonIBC$SBS_96 %>% t(), mode = "SBS", style = "cosmic")
+
+# Manual signature estimation and extraction & de novo mutational signature identification
+IBC_mt_est <- sig_estimate(mt_tally_IBC$nmf_matrix,
+                       range = 1:10,
+                       nrun = 50, # increase this value if you wana a more stable estimation
+                       use_random = FALSE, # if TRUE, add results from randomized input
+                       cores = 4,
+                       verbose = TRUE)
+
+show_sig_number_survey2(IBC_mt_est$survey) # show manual result details
+
+IBC_m_sigs <- sig_extract(mt_tally_IBC$nmf_matrix, n_sig = 4, nrun = 100) # select de novo sig number
+p_m_IBC <- show_sig_profile(IBC_m_sigs, mode = "SBS", style = "cosmic")
+IBC_m_sim <- get_sig_similarity(IBC_m_sigs, sig_db = "SBS") # get similarity
+add_labels(p_m_IBC, x = 0.72, y = 0.25, y_end = 0.9, labels = IBC_m_sim, n_label = 4) # 7x5
+
+nonIBC_mt_est <- sig_estimate(mt_tally_nonIBC$nmf_matrix,
+                              range = 1:10,
+                              nrun = 50, # increase this value if you wana a more stable estimation
+                              use_random = FALSE, # if TRUE, add results from randomized input
+                              cores = 4,
+                              verbose = TRUE)
+
+show_sig_number_survey2(nonIBC_mt_est$survey) # show manual result details
+
+nonIBC_m_sigs <- sig_extract(mt_tally_nonIBC$nmf_matrix, n_sig = 4, nrun = 100) # select de novo sig number
+p_m_nonIBC <- show_sig_profile(nonIBC_m_sigs, mode = "SBS", style = "cosmic")
+nonIBC_m_sim <- get_sig_similarity(nonIBC_m_sigs, sig_db = "SBS") # get similarity
+add_labels(p_m_nonIBC, x = 0.72, y = 0.25, y_end = 0.9, labels = nonIBC_m_sim, n_label = 4) # 7x5
+
+
+# Automatic extraction & de novo mutational signature identification
+IBC_mt_sig2 <- sig_unify_extract(mt_tally_IBC$nmf_matrix, range = 10, nrun = 100)
+nonIBC_mt_sig2 <- sig_unify_extract(mt_tally_nonIBC$nmf_matrix, range = 10, nrun = 100)
+
+p_IBC <- show_sig_profile(IBC_mt_sig2, mode = "SBS", style = "cosmic")
+p_nonIBC <- show_sig_profile(nonIBC_mt_sig2, mode = "SBS", style = "cosmic")
+
+IBC_sim <- get_sig_similarity(IBC_mt_sig2, sig_db = "SBS")
+nonIBC_sim <- get_sig_similarity(nonIBC_mt_sig2, sig_db = "SBS")
+
+add_labels(p_IBC, x = 0.72, y = 0.25, y_end = 0.9, labels = IBC_sim, n_label = 2)
+add_labels(p_nonIBC, x = 0.72, y = 0.25, y_end = 0.9, labels = nonIBC_sim, n_label = 2)
+
+# Match Signatures with known mut signatures
+## IBC
+IBC_sim_v2 <- get_sig_similarity(IBC_mt_sig2,sig_db = "legacy") # cosmic V2
+pheatmap::pheatmap(IBC_sim_v2$similarity)
+
+IBC_sim_v3 <- get_sig_similarity(IBC_mt_sig2, sig_db = "SBS") # cosmic V3
+pheatmap::pheatmap(IBC_sim_v3$similarity)
+
+IBC_sim_TSB <- get_sig_similarity(IBC_mt_sig2,sig_db = "TSB") # cosmic TSB
+pheatmap::pheatmap(IBC_sim_TSB$similarity)
+
+## non-IBC
+nonIBC_sim_v2 <- get_sig_similarity(nonIBC_mt_sig2,sig_db = "legacy") # cosmic V2
+pheatmap::pheatmap(nonIBC_sim_v2$similarity)
+
+nonIBC_sim_v3 <- get_sig_similarity(nonIBC_mt_sig2, sig_db = "SBS") # cosmic V3
+pheatmap::pheatmap(nonIBC_sim_v3$similarity)
+
+nonIBC_sim_TSB <- get_sig_similarity(nonIBC_mt_sig2,sig_db = "TSB") # cosmic TSB
+pheatmap::pheatmap(nonIBC_sim_TSB$similarity)
+
+# Fit signatures from reference signature databasase 
+## IBC
+IBC_matrix <- t(mt_tally_IBC$nmf_matrix)
+IBC_cosmic_v2 <- sig_fit(IBC_matrix, sig_index = "ALL", sig_db = "legacy", return_class = "data.table", rel_threshold = 0.05)
+IBC_cosmic_v3 <- sig_fit(IBC_matrix, sig_index = "ALL", sig_db = "SBS", return_class = "data.table", rel_threshold = 0.05)
+
+## nonIBC 
+nonIBC_matrix <- t(mt_tally_nonIBC$nmf_matrix)
+nonIBC_cosmic_v2 <- sig_fit(nonIBC_matrix, sig_index = "ALL", sig_db = "legacy", return_class = "data.table", rel_threshold = 0.05)
+nonIBC_cosmic_v3 <- sig_fit(nonIBC_matrix, sig_index = "ALL", sig_db = "SBS", return_class = "data.table", rel_threshold = 0.05)
+
+# SBS signature profile plot 9x3
+## IBC
+show_sig_profile(IBC_mt_sig2, mode = "SBS", paint_axis_text = FALSE, x_label_angle = 90)
+show_sig_profile(IBC_mt_sig2, mode = "SBS", style = "cosmic", x_label_angle = 90)
+
+show_cosmic_sig_profile(sig_index = c(3,2,6), style = "cosmic",sig_db = "SBS")
+
+show_sig_exposure(IBC_mt_sig2)
+show_sig_exposure(IBC_mt_sig2, style = "cosmic")
+
+## non-IBC
+show_sig_profile(nonIBC_mt_sig2, mode = "SBS", paint_axis_text = FALSE, x_label_angle = 90)
+show_sig_profile(nonIBC_mt_sig2, mode = "SBS", style = "cosmic", x_label_angle = 90)
+
+show_cosmic_sig_profile(sig_index = c(3,2,6), style = "cosmic",sig_db = "SBS")
+
+
+show_sig_exposure(nonIBC_sim_v3)
+show_sig_exposure(nonIBC_sim_v3, style = "cosmic")
+
+# plot raw catalog profile.
+## IBC
+show_catalogue(t(mt_tally_IBC$nmf_matrix), style = "cosmic", x_label_angle = 90)
+
+## nonIBC
+show_catalogue(t(mt_tally_nonIBC$nmf_matrix), style = "cosmic", x_label_angle = 90)
+
+## 1.20 ggplot - CNV on Chromosome ####
+### 1.20.1 Create hg19 chromosome ####
+hg19.df <- data.frame(chromName = seqnames(BSgenome.Hsapiens.UCSC.hg19), # Chromosome name
+                      chromlength = seqlengths(BSgenome.Hsapiens.UCSC.hg19)# Chromosome length
+)
+hg19.df$chromNum <- 1:length(hg19.df$chromName) 
+hg19.df <- hg19.df[1:22,] 
+hg19.df$chromlengthCumsum <- cumsum(as.numeric(hg19.df$chromlength)) 
+hg19.df$chormStartPosFrom0 <- c(0,hg19.df$chromlengthCumsum[-nrow(hg19.df)])
+tmp_middle <- diff(c(0,hg19.df$chromlengthCumsum)) / 2
+hg19.df$chromMidelePosFrom0 <- hg19.df$chormStartPosFrom0 + tmp_middle
+hg19.df$ypos <- rep(c(1.0,1.25),11)
+
+### 1.20.2 Load IBC GISTIC2.0 files ####
+IBC_GISTIC.scores <- read.table("D:/bioinfo/project/IBC_Skin/output_files/WES/GISTIC2/15IBC_Sequenza_GISTIC_20230712/scores.gistic",sep="\t",header=T,stringsAsFactors = F)
+
+IBC_chromID <- IBC_GISTIC.scores$Chromosome
+
+IBC_GISTIC.scores$StartPos <- IBC_GISTIC.scores$Start + hg19.df$chormStartPosFrom0[IBC_chromID]
+IBC_GISTIC.scores$EndPos <- IBC_GISTIC.scores$End + hg19.df$chormStartPosFrom0[IBC_chromID]
+
+range(IBC_GISTIC.scores$G.score)
+
+IBC_GISTIC.scores[IBC_GISTIC.scores$Type == "Del", "G.score"] <- IBC_GISTIC.scores[IBC_GISTIC.scores$Type == "Del", "G.score"] * -1
+IBC_GISTIC.scores[IBC_GISTIC.scores$Type == "Del", "frequency"] <- IBC_GISTIC.scores[IBC_GISTIC.scores$Type == "Del", "frequency"] * -1
+
+range(IBC_GISTIC.scores$G.score)
+range(IBC_GISTIC.scores$frequency)
+
+### 1.20.3 IBC CNV plot ####
+# area
+ggplot(IBC_GISTIC.scores, aes(StartPos, G.score))+
+  geom_area(aes(group=Type, fill=factor(Type,levels = c("Del","Amp"))))+
+  scale_fill_lancet(guide=guide_legend(reverse = T),name="Type")+
+  geom_vline(data = hg19.df,mapping=aes(xintercept=chromlengthCumsum),linetype=2)+
+  geom_text(data = hg19.df,aes(x=chromMidelePosFrom0,y=ypos,label=chromName))+
+  scale_x_continuous(expand = c(0,-1000),limits = c(0,2.9e9),name = NULL,labels = NULL)+
+  ylim(-0.3,0.3)+
+  theme_minimal()+
+  theme(legend.position = "right",
+        axis.text.y = element_text(color = "black",size = 14),
+        axis.title.y = element_text(color = "black",size = 16))
+
+# bar 16x3 G.score
+ggplot(IBC_GISTIC.scores, aes(StartPos, G.score))+
+  geom_rect(aes(xmin=StartPos, xmax=EndPos, ymin=0, ymax=G.score, fill=factor(Type, levels=c("Del", "Amp"))))+
+  scale_fill_lancet(guide=guide_legend(reverse = T),name="Type")+
+  geom_vline(data = hg19.df, mapping=aes(xintercept=chromlengthCumsum), linetype=2)+
+  geom_text(data = hg19.df, aes(x=chromMidelePosFrom0, y=ypos, label=chromName))+
+  scale_x_continuous(expand = c(0,-1000), limits = c(0, 2.9e9), name = NULL, labels = NULL)+
+  ylim(-0.5, 2)+
+  theme_minimal()+
+  ggtitle("15 IBC")+
+  theme(legend.position = "right",
+        axis.text.y = element_text(color = "black", size = 14),
+        axis.title.y = element_text(color = "black", size = 16))
+
+
+# bar 16x3 frequency
+ggplot(IBC_GISTIC.scores, aes(StartPos, frequency))+
+  geom_rect(aes(xmin=StartPos, xmax=EndPos, ymin=0, ymax=frequency, fill=factor(Type, levels=c("Del", "Amp"))))+
+  scale_fill_lancet(guide=guide_legend(reverse = T),name="Type")+
+  geom_vline(data = hg19.df, mapping=aes(xintercept=chromlengthCumsum), linetype=2)+
+  geom_text(data = hg19.df, aes(x=chromMidelePosFrom0, y=ypos, label=chromName))+
+  scale_x_continuous(expand = c(0,-1000), limits = c(0, 2.9e9), name = NULL, labels = NULL)+
+  #ylim(-0.5, 1)+
+  theme_minimal()+
+  ggtitle("15 IBC")+
+  theme(legend.position = "right",
+        axis.text.y = element_text(color = "black", size = 14),
+        axis.title.y = element_text(color = "black", size = 16))+
+  theme_bw() + theme(panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                     panel.grid.major.x = element_blank(),
+                     panel.grid.minor.x = element_blank())
+
+
+### 1.20.4 Load nonIBC GISTIC2.0 files ####
+nonIBC_GISTIC.scores <- read.table("D:/bioinfo/project/IBC_Skin/output_files/WES/GISTIC2/5nonIBC_33TCGA_Sequenza_GISTIC_20230713/scores.gistic",sep="\t",header=T,stringsAsFactors = F)
+
+nonIBC_chromID <- nonIBC_GISTIC.scores$Chromosome
+
+nonIBC_GISTIC.scores$StartPos <- nonIBC_GISTIC.scores$Start + hg19.df$chormStartPosFrom0[nonIBC_chromID]
+nonIBC_GISTIC.scores$EndPos <- nonIBC_GISTIC.scores$End + hg19.df$chormStartPosFrom0[nonIBC_chromID]
+
+range(nonIBC_GISTIC.scores$G.score)
+
+nonIBC_GISTIC.scores[nonIBC_GISTIC.scores$Type == "Del", "G.score"] <- nonIBC_GISTIC.scores[nonIBC_GISTIC.scores$Type == "Del", "G.score"] * -1
+nonIBC_GISTIC.scores[nonIBC_GISTIC.scores$Type == "Del", "frequency"] <- nonIBC_GISTIC.scores[nonIBC_GISTIC.scores$Type == "Del", "frequency"] * -1
+
+range(nonIBC_GISTIC.scores$G.score)
+
+### 1.20.5 non-IBC CNV plot ####
+# area 图
+ggplot(nonIBC_GISTIC.scores, aes(StartPos, G.score))+
+  geom_area(aes(group=Type, fill=factor(Type,levels = c("Del","Amp"))))+
+  scale_fill_lancet(guide=guide_legend(reverse = T),name="Type")+
+  geom_vline(data = hg19.df,mapping=aes(xintercept=chromlengthCumsum),linetype=2)+
+  geom_text(data = hg19.df,aes(x=chromMidelePosFrom0,y=ypos,label=chromName))+
+  scale_x_continuous(expand = c(0,-1000),limits = c(0,2.9e9),name = NULL,labels = NULL)+
+  ylim(-0.3,0.3)+
+  theme_minimal()+
+  theme(legend.position = "top",
+        axis.text.y = element_text(color = "black",size = 14),
+        axis.title.y = element_text(color = "black",size = 16)
+  )
+
+# bar 16x3
+ggplot(nonIBC_GISTIC.scores, aes(StartPos, G.score))+
+  geom_rect(aes(xmin=StartPos, xmax=EndPos, ymin=0, ymax=G.score, fill=factor(Type, levels=c("Del", "Amp"))))+
+  scale_fill_lancet(guide=guide_legend(reverse = T),name="Type")+
+  geom_vline(data = hg19.df, mapping=aes(xintercept=chromlengthCumsum), linetype=2)+
+  geom_text(data = hg19.df, aes(x=chromMidelePosFrom0, y=ypos, label=chromName))+
+  scale_x_continuous(expand = c(0,-1000), limits = c(0, 2.9e9), name = NULL, labels = NULL)+
+  ylim(-0.5, 1.7)+
+  theme_minimal()+
+  ggtitle("5 FAH + 33 TCGA-BRCA non-IBC")+
+  theme(legend.position = "right",
+        axis.text.y = element_text(color = "black", size = 14),
+        axis.title.y = element_text(color = "black", size = 16))+
+  theme_bw() + theme(panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                     panel.grid.major.x = element_blank(),
+                     panel.grid.minor.x = element_blank())
+
+# bar 16x3 frequency
+ggplot(nonIBC_GISTIC.scores, aes(StartPos, frequency))+
+  geom_rect(aes(xmin=StartPos, xmax=EndPos, ymin=0, ymax=frequency, fill=factor(Type, levels=c("Del", "Amp"))))+
+  scale_fill_lancet(guide=guide_legend(reverse = T),name="Type")+
+  geom_vline(data = hg19.df, mapping=aes(xintercept=chromlengthCumsum), linetype=2)+
+  geom_text(data = hg19.df, aes(x=chromMidelePosFrom0, y=ypos, label=chromName))+
+  scale_x_continuous(expand = c(0,-1000), limits = c(0, 2.9e9), name = NULL, labels = NULL)+
+  ylim(-0.5, 1)+
+  theme_minimal()+
+  ggtitle("5 FAH + 33 TCGA-BRCA non-IBC")+
+  theme(legend.position = "right",
+        axis.text.y = element_text(color = "black", size = 14),
+        axis.title.y = element_text(color = "black", size = 16))+
+  theme_bw() + theme(panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                     panel.grid.major.x = element_blank(),
+                     panel.grid.minor.x = element_blank())
+
+
+## 1.21 Plot CNV regions with significant difference ####
+### 1.21.1 Load files ####
+IBC_nonIBC_all.lesions <- "D:/bioinfo/project/IBC_Skin/output_files/WES/GISTIC2/15IBC_5nonIBC_33TCGA_Sequenza_GISTIC_20230713_unfiltered/all_lesions.conf_5.txt"
+IBC_nonIBC_amp.genes <- "D:/bioinfo/project/IBC_Skin/output_files/WES/GISTIC2/15IBC_5nonIBC_33TCGA_Sequenza_GISTIC_20230713_unfiltered/amp_genes.conf_5.txt"
+IBC_nonIBC_del.genes <- "D:/bioinfo/project/IBC_Skin/output_files/WES/GISTIC2/15IBC_5nonIBC_33TCGA_Sequenza_GISTIC_20230713_unfiltered/del_genes.conf_5.txt"
+IBC_nonIBC_scores.gis <- "D:/bioinfo/project/IBC_Skin/output_files/WES/GISTIC2/15IBC_5nonIBC_33TCGA_Sequenza_GISTIC_20230713_unfiltered/scores.gistic"
+
+
+IBC_nonIBC_laml.gistic = readGistic(gisticAllLesionsFile = IBC_nonIBC_all.lesions, 
+                                    gisticAmpGenesFile = IBC_nonIBC_amp.genes, 
+                                    gisticDelGenesFile = IBC_nonIBC_del.genes, 
+                                    gisticScoresFile = IBC_nonIBC_scores.gis, 
+                                    isTCGA = FALSE)
+
+
+gisticOncoPlot(gistic=IBC_nonIBC_laml.gistic, showTumorSampleBarcodes=T, top=1000, colors = c("Amp"="#ED0000","Del"="#00468B"))
+
+IBC_nonIBC_cytoband.summary <- IBC_nonIBC_laml.gistic@cytoband.summary
+IBC_nonIBC_cytoband.summary <- subset(IBC_nonIBC_cytoband.summary, Cytoband  %in% c(IBC_cytoband$Cytoband,nonIBC_cytoband$Cytoband ))
+
+IBC_nonIBC_cn_matrix <- as.data.frame(IBC_nonIBC_laml.gistic@numericMatrix)
+colnames(IBC_nonIBC_cn_matrix) <- substr(colnames(IBC_nonIBC_cn_matrix),1,12)
+IBC_nonIBC_cn_matrix <- IBC_nonIBC_cn_matrix[,order(colnames(IBC_nonIBC_cn_matrix))]
+
+
+IBC_cn_matrix <- IBC_nonIBC_cn_matrix[,1:15]
+nonIBC_cn_matrix <- IBC_nonIBC_cn_matrix[16:53]
+
+IBC_cn_matrix[IBC_cn_matrix==2] <- -1
+nonIBC_cn_matrix[nonIBC_cn_matrix==2] <- -1
+
+IBC_cn_sum <- data.frame(row.names = rownames(IBC_cn_matrix),
+                         IBC_CN_count = rowSums(IBC_cn_matrix))
+IBC_cn_sum$IBC_CN_count <- abs(IBC_cn_sum$IBC_CN_count)
+IBC_cn_sum$IBC_noCN_count <- 15- IBC_cn_sum$IBC_CN_count
+
+
+nonIBC_cn_sum <- data.frame(row.names = rownames(nonIBC_cn_matrix),
+                            nonIBC_CN_count = rowSums(nonIBC_cn_matrix))
+nonIBC_cn_sum$nonIBC_CN_count <- abs(nonIBC_cn_sum$nonIBC_CN_count)
+nonIBC_cn_sum$nonIBC_noCN_count <- 38 - nonIBC_cn_sum$nonIBC_CN_count
+
+table(rownames(IBC_cn_sum) %in% rownames(nonIBC_cn_sum))
+
+IBC_nonIBC_cn_sum <- merge(IBC_cn_sum,nonIBC_cn_sum,by="row.names")
+
+### 1.21.2 Run fisher's exact ####
+IBC_nonIBC_cn_fisher_out <- data.frame()
+for (i in 1:nrow(IBC_nonIBC_cn_sum)){
+  t <- fisher.test(matrix(as.vector(t(IBC_nonIBC_cn_sum[i, 2:5])), ncol=2))
+  d <- IBC_nonIBC_cn_sum[i, ]
+  d$p.value <- t$p.value
+  d$OR <- t$estimate[[1]]
+  d$OR.lower95 <- t$conf.int[1]
+  d$OR.upper95 <- t$conf.int[2]
+  IBC_nonIBC_cn_fisher_out <- rbind(IBC_nonIBC_cn_fisher_out, d)
+}
+
+IBC_nonIBC_cn_fisher_out_final <- IBC_nonIBC_cn_fisher_out
+IBC_nonIBC_cn_fisher_out_final$Cytoband <- sub(".*:", "", IBC_nonIBC_cn_fisher_out_final$Row.names)
+IBC_nonIBC_cn_fisher_out_final <- subset(IBC_nonIBC_cn_fisher_out_final, p.value < 0.05)
+IBC_nonIBC_cn_fisher_out_final$FDR <- p.adjust(IBC_nonIBC_cn_fisher_out_final$p.value,method = "fdr")
+IBC_nonIBC_cn_fisher_out_final$BH_adj.p <- p.adjust(IBC_nonIBC_cn_fisher_out_final$p.value,method = "BH")
+#IBC_nonIBC_cn_fisher_out_final <- subset(IBC_nonIBC_cn_fisher_out_final, Cytoband %in% c(AMP_cytoband$Cytoband,DEL_cytoband$Cytoband))
+write.table(IBC_nonIBC_cn_fisher_out_final,"D:/bioinfo/project/IBC_Skin/output_files/WES/GISTIC2/IBC_nonIBC_cn_fisher_out_final.txt",col.names = T,row.names = F,sep = '\t',quote = F)
+
+IBC_nonIBC_cn_matrix <- subset(IBC_nonIBC_cn_matrix, rownames(IBC_nonIBC_cn_matrix) %in% IBC_nonIBC_cn_fisher_out_final$Row.names)
+
+IBC_nonIBC_cn_matrix[IBC_nonIBC_cn_matrix==2] <- "DEL"
+IBC_nonIBC_cn_matrix[IBC_nonIBC_cn_matrix==1] <- "AMP"
+IBC_nonIBC_cn_matrix[IBC_nonIBC_cn_matrix==0] <- ""
+#IBC_nonIBC_cn_matrix$cytoband <- sub(".*:", "", rownames(IBC_nonIBC_cn_matrix))
+#IBC_nonIBC_cn_matrix <- IBC_nonIBC_cn_matrix[!duplicated(IBC_nonIBC_cn_matrix$cytoband),]
+IBC_nonIBC_cn_matrix$cytoband <- NULL
+
+### 1.21.3 oncoprint - significant CNV regions ####
+alter_fun = list(
+  background = function(x, y, w, h) {grid.rect(x, y, w-unit(2, "pt"), 
+                                               h-unit(2, "pt"), 
+                                               gp = gpar(fill = "#CCCCCC", col = NA))},
+  AMP = function(x, y, w, h) {grid.rect(x, y, w-unit(2, "pt"), 
+                                        h-unit(2, "pt"), 
+                                        gp = gpar(fill = col["AMP"], col = NA))},
+  DEL = function(x, y, w, h) {grid.rect(x, y, w-unit(2, "pt"), 
+                                        h-unit(1, "pt"), 
+                                        gp = gpar(fill = col["DEL"], col = NA))})
+
+col = c("AMP" = "#ED0000", 
+        "DEL" = "#00468B")
+
+heatmap_legend_param = list(title = "CNV Types", 
+                            at = c("AMP", "DEL"), 
+                            labels = c("AMP", "DEL"))
+
+# 8x6
+oncoPrint(IBC_nonIBC_cn_matrix,
+          alter_fun = alter_fun, 
+          col = col, 
+          column_title = "", 
+          row_names_side = "left",
+          right_annotation = NULL,
+          show_pct = F,
+          #pct_side = "right",
+          heatmap_legend_param = heatmap_legend_param,
+          show_column_names = T,
+          row_names_gp = gpar(fontsize = 10),
+          column_order = colnames(IBC_nonIBC_cn_matrix),
+          column_split = c(rep("IBC",15),rep("non-IBC",38)))
+
+
+# 2. Code for RNA analysis ####
+## 2.1 Deseq2 ####
+### 2.1.1 Select target genes ####
+target_genes <- c() # Genes with IBC specific mutations 
+target_genes2 <- gene_CNV_fisher_out_q_sig$GeneSymbol # Genes in IBC specific CNV regions with different expression
+target_genes2 <- subset(target_genes2, target_genes2 %in% rownames(deg))
+target_genes2 <- c("ABHD15","DHRS13","LIN7A","NEFL","PTPRR","ROBO2","RPL23A","SLC16A6","STC1","TANC2","TAOK1")
+target_genes2 <- gene_AMP_fisher_out_final$GeneSymbol # AMP_Genes
+target_genes3 <- gene_DEL_fisher_out_final$GeneSymbol # DEL_Genes
+target_genes4 <- c("CTSC","RAB38","LIME1","ZGPAT","RN7SL242P","RN7SL173P","RN7SL4P","AC004801.2","POLR2J3","AC004951.2","PCDHGA10","PCDHGB1","TM4SF1-AS1","AC093001.1") #fusion genes
+target_genes4 <- rownames(all.del.gene_fisher)
+
+# COSMIC HALLMARK driver genes
+cosmic_consensus <- read.csv("D:/bioinfo/database/COSMIC/cancer_gene_census.csv", header = T,fill = T)
+cosmic_consensus <- subset(cosmic_consensus, Hallmark == "Yes")
+target_genes3 <- c("ERBB2","CDK12","CCND1","RNF213","ASPSCR1","CANT1","H3F3A","MTOR","PAX7","ARID1A","CAMTA1","PRDM16","CDKN2A")
+
+### 2.1.2 Load RNA-seq files ####
+quant.files<-read.table("D:/bioinfo/project/IBC_Skin/input_files/reads_merged.txt", header = T,row.names = 1)
+#quant.files<-read.table("D:/bioinfo/project/IBC_Skin/input_files/tpm_merged.txt", header = T,row.names = 1)
+quant.files <- as.data.frame(t(quant.files))
+rownames(quant.files)
+quant.files <- subset(quant.files, rownames(quant.files) %in% c("IBC01.T.ncRNA","IBC02.T","IBC03.T.ncRNA","IBC04.T","IBC05.T","IBC06.T","IBC07.T","IBC08.T","IBC09.T","IBC10.T","IBC12.T","IBC13.T","IBC14.T","IBC15.T","IBC16.T","IBC17.T","nonIBC01.T","nonIBC02.T","nonIBC03.T","nonIBC04.T","nonIBC05.T"))
+quant.files <- as.data.frame(t(quant.files))
+
+BRCA_clinical <- readRDS("D:/bioinfo/database/TCGA_BRCA/TCGA_BRCA_clinical_2022.11.16.rds")
+patient_info <- readRDS("D:/bioinfo/project/IBC_Skin/R_base/TCGA_BRCA_33asian.rds")
+
+TCGA_exprSet <- readRDS("D:/bioinfo/database/TCGA_BRCA/geneexp_GENECODE_annotated_count.rds")
+#TCGA_exprSet <- readRDS("D:/bioinfo/database/TCGA_BRCA/geneexp_GENECODE_annotated_TPM.rds")
+TCGA_exprSet <- as.data.frame(t(TCGA_exprSet))
+TCGA_exprSet <- subset(TCGA_exprSet,substr(rownames(TCGA_exprSet),1,12) %in% patient_info$bcr_patient_barcode)
+TCGA_exprSet <- as.data.frame(t(TCGA_exprSet))
+TCGA_exprSet <- subset(TCGA_exprSet, rownames(TCGA_exprSet) %in% rownames(quant.files))
+
+quant.files <- subset(quant.files, rownames(quant.files) %in% rownames(TCGA_exprSet))
+TCGA_exprSet <- TCGA_exprSet[rownames(quant.files),]
+
+quant.files <- cbind(quant.files,TCGA_exprSet)
+
+# IBC Tumor vs nonIBC Tumor
+samples <- data.frame(Sample=colnames(quant.files),
+                    Condition=c(rep("IBC",16),rep("nonIBC",38)),
+                    batch=c(rep("self",21),rep("TCGA",33)))
+
+#samples<-samples[order(samples$Condition,decreasing = T),]
+samples$Condition <- as.factor(samples$Condition)
+samples$Condition <- relevel(samples$Condition, ref = 'nonIBC')
+quant.files <- quant.files[,samples$Sample]
+#quant.files <- round(quant.files)
+
+## Gene filtering 
+quant.files <- quant.files[apply(quant.files, 1, sum) > 0 , ]
+
+### 2.1.3 Batch effect correction ####
+batch_list <- samples$batch
+group_list <- as.character(samples$Condition)
+quant.files <- as.matrix(quant.files)
+
+#adj_counts <- ComBat_seq(as.matrix(quant.files),batch = batch_list, group = group_list) # too slow
+adj_counts <- ComBat_seq(as.matrix(quant.files),batch = batch_list)
+
+adj_counts <- as.data.frame(adj_counts)
+
+adj_counts <- na.omit(adj_counts)
+adj_counts <- round(adj_counts)
+
+#adj_counts <- read.table("D:/bioinfo/project/IBC_Skin/input_files/IBC_TCGA_adj.counts2.txt")
+
+# create dds
+dds_raw <- DESeqDataSetFromMatrix(countData=round(quant.files), 
+                              colData=samples, 
+                              design=~batch + Condition)
+
+dds_cbs <- DESeqDataSetFromMatrix(countData=adj_counts, 
+                              colData=samples, 
+                              design=~batch + Condition)
+
+## pca plot
+dds_raw <- estimateSizeFactors(dds_raw)
+dds_raw_nor <- SummarizedExperiment(counts(dds_raw, normalized = TRUE),
+                                colData=colData(dds_raw))
+
+dds_cbs <- estimateSizeFactors(dds_cbs)
+dds_cbs_nor <- SummarizedExperiment(counts(dds_cbs, normalized = TRUE),
+                                    colData=colData(dds_cbs))
+
+dds_raw_nor_df <- plotPCA(DESeqTransform(dds_raw_nor), intgroup=c("batch"), returnData=T)  
+dds_cbs_nor_df <- plotPCA(DESeqTransform(dds_cbs_nor), intgroup=c("batch"), returnData=T)  
+
+plotPCA(DESeqTransform(dds_raw_nor), intgroup=c("batch"))
+plotPCA(DESeqTransform(dds_cbs_nor), intgroup=c("batch"))
+
+# 6x5
+p_raw<-ggplot(data = dds_raw_nor_df, aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = group), size = 3) + 
+  scale_color_manual(values = c('orange', 'purple')) +  
+  theme(panel.grid = element_blank(), panel.background = element_rect(color = 'black', fill = 'transparent'), 
+        legend.key = element_rect(fill = 'transparent')) +  
+  labs(x =  paste('PC1:', "90", '%'), y = paste('PC2:', "6", '%'), color = '')
+
+p_raw <- p_raw + geom_text_repel(aes(label = name), 
+                                 size = 3, 
+                                 show.legend = F, 
+                                 box.padding = unit(0.5, 'lines'))
+p_raw 
+
+
+p_cbs<-ggplot(data = dds_cbs_nor_df, aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = group), size = 3) + 
+  scale_color_manual(values = c('orange', 'purple')) + 
+  theme(panel.grid = element_blank(), panel.background = element_rect(color = 'black', fill = 'transparent'), 
+        legend.key = element_rect(fill = 'transparent')) +
+labs(x =  paste('PC1:', "76", '%'), y = paste('PC2:', "13", '%'), color = '')
+
+p_cbs <- p_cbs + geom_text_repel(aes(label = name), 
+                                 size = 3, 
+                                 show.legend = F, 
+                                 box.padding = unit(0.5, 'lines'))
+p_cbs 
+
+### 2.1.4 Differential analysis ####
+dds <- DESeq(dds)
+
+# get results
+resultsNames(dds)
+
+res <- results(dds, name = resultsNames(dds)[3])
+res <- results(dds, name = resultsNames(dds)[2])
+
+# check summary & creat result dataframe
+summary(res)
+resOrdered<-res[order(res$padj),]
+res.df <- as.data.frame(resOrdered)
+res.df = na.omit(res.df)
+
+### 2.1.5 Volcano plot ####
+# set cutoff
+logFC_cutoff=1
+p_cutoff=0.05
+q_cutoff=0.25
+
+res.df$change <-NA
+res.df$change = as.factor(ifelse(res.df$padj < q_cutoff & abs(res.df$log2FoldChange) > logFC_cutoff,
+                                 ifelse(res.df$log2FoldChange > logFC_cutoff ,'IBC','nonIBC'),'ns'))
+this_tile <- paste0('log2FC cutoff: ',round(logFC_cutoff,3),
+                    '\npadj cutoff:',p_cutoff,
+                    '\nThe number of genes upregulated in nonIBC: ',nrow(subset(res.df, change=="nonIBC" & log2FoldChange < logFC_cutoff & padj<0.05)) ,
+                    '\nThe number of genes upregulated in IBC: ',nrow(subset(res.df, change=="IBC" & log2FoldChange > logFC_cutoff & padj<0.05))
+)
+
+res.df$label <- NA
+res.df$label=ifelse(res.df$padj < q_cutoff & abs(res.df$log2FoldChange) >= 1,rownames(res.df),"")
+res.df$target <- NULL
+res.df$target=ifelse(rownames(res.df) %in% target_genes,rownames(res.df),"")
+res.df$target[which(res.df$change=="ns")] <- ""
+res.df$target2 <- NULL
+res.df$target2=ifelse(rownames(res.df) %in% target_genes2,rownames(res.df),"")
+res.df$target2[which(res.df$change=="ns")] <- ""
+res.df$target3 <- NULL
+res.df$target3=ifelse(rownames(res.df) %in% target_genes3,rownames(res.df),"")
+res.df$target3[which(res.df$change=="ns")] <- ""
+res.df$target4 <- NULL
+res.df$target4=ifelse(rownames(res.df) %in% target_genes4,rownames(res.df),"")
+res.df$target4[which(res.df$change=="ns")] <- ""
+
+write.table(res.df,"D:/bioinfo/project/IBC_Skin/output_files/RNA/Deseq2/DESeq2_resdf_labeled_20230718.txt",col.names = T,row.names = F,sep = '\t',quote = F)
+
+
+g = ggplot(data=res.df, 
+           aes(x=log2FoldChange, y=-log10(padj), 
+               color=change)) +
+  geom_point(
+    #alpha=0.4, 
+    size=2,
+    shape=19) +
+  #scale_shape_manual(values = c(19)) +
+  geom_vline(xintercept=c(-logFC_cutoff,logFC_cutoff),lty=4,col="black",lwd=0.8) +
+  geom_hline(yintercept = -log10(q_cutoff),lty=4,col="black",lwd=0.8) +
+  geom_hline(yintercept = -log10(0.05),lty=4,col="black",lwd=0.8) +
+  theme_set(theme_set(theme_bw(base_size=20)))+
+  xlab("Log2 Fold Change") + 
+  ylab("-Log10(Adjusted P-value)") +
+  #ggtitle( this_tile ) + 
+  theme(plot.title = element_text(size=10,hjust = 0.5))+
+  scale_colour_manual(values = c('#FFBE7A','#8ECFC9','#A9B8c6'))+ 
+  xlim(-10,10)+
+  ylim(0,5)+
+  theme_bw() + theme(panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                     panel.grid.major.x = element_blank(),
+                     panel.grid.minor.x = element_blank())
+
+
+#label
+g+geom_text_repel(data = res.df, aes(x = log2FoldChange, 
+                                     y = -log10(padj), 
+                                     label = label),
+                  size = 3,
+                  box.padding = unit(0.5, "lines"),
+                  point.padding = unit(0.8, "lines"), #defult unit is lines
+                  segment.color = "black", 
+                  max.overlaps = 15,#注释点的数目
+                  force = 1,#强制让重叠的文本分开
+                  show.legend = FALSE)
+
+#target_gene
+g+geom_text_repel(data = res.df, aes(x = log2FoldChange, 
+                                     y = -log10(res.df$padj), 
+                                     label = target),
+                  size = 5,
+                  box.padding = unit(0.5, "lines"),
+                  point.padding = unit(0.8, "lines"), #defult unit is lines
+                  segment.color = "#287246", 
+                  max.overlaps = 100000,#注释点的数目
+                  force = 1,#强制让重叠的文本分开
+                  colour="#287246",
+                  show.legend = FALSE) +
+  geom_text_repel(data = res.df, aes(x = log2FoldChange,
+                                     y = -log10(res.df$padj), 
+                                     label = target2),
+                  size = 5,
+                  box.padding = unit(0.5, "lines"),
+                  point.padding = unit(0.8, "lines"), #defult unit is lines
+                  segment.color = "#C82423", 
+                  max.overlaps = 100000,#注释点的数目
+                  force = 1,#强制让重叠的文本分开
+                  colour="#C82423",
+                  show.legend = FALSE) + 
+  geom_text_repel(data = res.df, aes(x = log2FoldChange,
+                                     y = -log10(res.df$padj), 
+                                     label = target3),
+                  size = 5,
+                  box.padding = unit(0.5, "lines"),
+                  point.padding = unit(0.8, "lines"), #defult unit is lines
+                  segment.color = "#2878B5", 
+                  max.overlaps = 100000,#注释点的数目
+                  force = 1,#强制让重叠的文本分开
+                  colour="#2878B5",
+                  show.legend = FALSE)+
+  geom_text_repel(data = res.df, aes(x = log2FoldChange,
+                                     y = -log10(res.df$padj), 
+                                     label = target4),
+                  size = 5,
+                  box.padding = unit(0.5, "lines"),
+                  point.padding = unit(0.8, "lines"), #defult unit is lines
+                  segment.color = "#887457", 
+                  max.overlaps = 100000,#注释点的数目
+                  force = 1,#强制让重叠的文本分开
+                  colour="#887457",
+                  show.legend = FALSE)
+
+#plot raw 7x8
+g+geom_text(data = res.df, 
+            aes(x = log2FoldChange, y = -log10(res.df$padj), label = label),
+            colour = "black",
+            size = 4,
+            check_overlap = TRUE,
+            show.legend = FALSE)
+
+g+geom_text(data = res.df, 
+            aes(x = log2FoldChange, y = -log10(res.df$pvalue), label = label),
+            colour = "black",
+            size = 4,
+            check_overlap = T,
+            show.legend = FALSE,
+            max.overlaps = 100000)
+
+
+# Select DEGs with log2FC > 1 & p<0.05 & padj < 0.25
+write.table(res.df,"D:/bioinfo/project/IBC_Skin/output_files/RNA/Tumor_res.df.txt",col.names = T,row.names = T,quote = F,sep = '\t')
+
+keep <- abs(res.df$log2FoldChange) > 1  & res.df$padj < 0.25 & res.df$pvalue < 0.05
+
+deg <- res.df[keep, ]
+deg <- deg[order(abs(deg$log2FoldChange),decreasing = T), ]
+table(deg$change)
+
+table(target_genes %in% rownames(res.df))
+table(target_genes %in% rownames(deg))
+
+View(subset(res.df,rownames(res.df) %in% target_genes))
+View(subset(deg,rownames(deg) %in% target_genes))
+
+target_genes <- subset(target_genes,target_genes %in% rownames(deg))
+
+## 2.2 DEGs geneset enrichment analysis ####
+### 2.2.1 GO enrichment ####
+deg.up <- res.df[res.df$log2FoldChange > 1 & res.df$pvalue < 0.05 & res.df$padj < 0.05, ]
+deg.down <- res.df[res.df$log2FoldChange < -1 & res.df$pvalue < 0.05 & res.df$padj < 0.05, ]
+
+deg.up <- res.df[res.df$log2FoldChange > 1 & res.df$padj < 0.05, ]
+deg.down <- res.df[res.df$log2FoldChange < -1 & res.df$padj < 0.05, ]
+
+deg.up <- res.df[res.df$log2FoldChange > 1 & res.df$pvalue < 0.05, ]
+deg.down <- res.df[res.df$log2FoldChange < -1 & res.df$pvalue < 0.05, ]
+
+deg.up <- deg.up[order(deg.up$log2FoldChange, decreasing = T),]
+deg.down <- deg.down[order(deg.down$log2FoldChange, decreasing = F),]
+
+up_genes <- unique(deg.up$label)[grep("MT",rownames(deg.up),invert = T)]
+up_genes <- up_genes[grep("IGKV",up_genes,invert = T)]
+up_genes <- up_genes[grep("IGHV",up_genes,invert = T)]
+up_genes <- up_genes[grep("IGLV",up_genes,invert = T)]
+
+down_genes <- unique(deg.down$label[grep("MT",rownames(deg.down),invert = T)])
+down_genes <- down_genes[grep("IGKV",down_genes,invert = T)]
+down_genes <- down_genes[grep("IGHV",down_genes,invert = T)]
+down_genes <- down_genes[grep("IGLV",down_genes,invert = T)]
+
+deg.up.gene <- gsub("\\..*", "",  rownames(deg.up))
+deg.down.gene <- gsub("\\..*", "",  rownames(deg.down))
+
+deg.ls <- list(up = deg.up.gene, down = deg.down.gene)
+
+#11x8
+up.ego <- enrichGO(gene       = deg.up.gene,
+                   keyType       = "SYMBOL",
+                   OrgDb         = org.Hs.eg.db,
+                   ont           = "BP",
+                   pAdjustMethod = "BH",
+                   pvalueCutoff  = 0.05,
+                   qvalueCutoff  = 0.1,
+                   readable      = FALSE, 
+                   pool          = TRUE)
+
+dotplot(up.ego, showCategory=20,title="")
+barplot(up.ego, showCategory=20,title="EnrichmentGO_nonIBC")
+plotGOgraph(up.ego)
+
+ggplot(up.ego@result[1:30,], aes(x=Description,y=GeneRatio,fill=Cluster)) + 
+  geom_bar(stat = 'identity',width = 0.5) + 
+  coord_flip() + 
+  theme_bw() + 
+  scale_fill_manual(values=c('red','darkblue')) +
+  theme(panel.grid =element_blank())+
+  theme(panel.border = element_rect(size = 0.6)) + 
+  theme(text = element_text(size = 20,face = "bold"))
+
+down.ego <- enrichGO(gene     = deg.down.gene,
+                     keyType       = "SYMBOL",
+                     OrgDb         = org.Hs.eg.db,
+                     ont           = "BP",
+                     pAdjustMethod = "BH",
+                     pvalueCutoff  = 0.05,
+                     qvalueCutoff  = 0.1,
+                     readable      = FALSE, 
+                     pool          = TRUE)
+
+dotplot(down.ego, showCategory=20,title="")
+barplot(down.ego, showCategory=20,title="EnrichmentGO_IBC")
+plotGOgraph(down.ego)
+write.table(down.ego@result,"D:/bioinfo/project/IBC_Skin/output_files/RNA/IBC_Tumor_GO_BP.txt",quote = F,sep = '\t',row.names = T,col.names = T)
+
+### 2.2.2 KEGG enrichment ####
+deg.up.ei <- bitr(rownames(deg.up), fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)$ENTREZID
+deg.down.ei <- bitr(rownames(deg.down), fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)$ENTREZID
+
+#UP
+up.ekegg <- enrichKEGG(gene       = deg.up.ei,
+                       pAdjustMethod = "BH",
+                       pvalueCutoff  = 0.05,
+                       qvalueCutoff  = 0.1)
+
+up.kegg_subset <- subset(up.ekegg, up.ekegg@result$Description != c("African trypanosomiasis","Coronavirus disease - COVID-19","Malaria"))
+
+dotplot(up.ekegg, showCategory=20,title="")
+barplot(up.ekegg, showCategory=20,title="EnrichmentKEGG_nonIBC")
+
+selectedPathWays <-  up.ekegg@result$Description[1:30]
+selectedPathWays <- selectedPathWays[-c(1,4,6,8,11,12,15,16,18,19,20)]
+dotplot(up.ekegg, showCategory=selectedPathWays,title="EnrichmentKEGG_IBC_dot")
+
+y <- as.data.frame(up.ekegg)
+y <- y[order(y$p.adjust),]
+head(y)
+y$GeneRatio=sapply(strsplit(y$GeneRatio, split = "/"), function(x) as.numeric(x[1]) / as.numeric(x[2]))
+yy <- y[c(2,3,5,7,8,9,10,13,14,17,21,22,24),]
+yy <- yy[order(yy$GeneRatio),]
+ggplot(yy, # you can replace the numbers to the row number of pathway of your interest
+       aes(x = GeneRatio, y = Description)) + 
+  geom_point(aes(size = GeneRatio, color = p.adjust)) +
+  theme_bw(base_size = 14) +
+  scale_colour_gradient(limits=c(1, 0.1), low="red") +
+  ylab(NULL) +
+  ggtitle("KEGG pathway enrichment in IBC")
+
+# Down
+down.ekegg <- enrichKEGG(gene     = deg.down.ei,
+                         pAdjustMethod = "BH",
+                         pvalueCutoff  = 0.05,
+                         qvalueCutoff  = 0.1)
+
+dotplot(down.ekegg, showCategory=20,title="EnrichmentKEGG_IBC_dot")
+barplot(down.ekegg, showCategory=20,title="EnrichmentKEGG_IBC")
+write.table(down.ekegg@result,"D:/bioinfo/project/IBC_Skin/output_files/RNA/IBC_Tumor_KEGG.txt",quote = F,sep = '\t',row.names = T,col.names = T)
+
+# get dataframe
+GO_UP_df <- up.ego@result
+GO_DN_df <- down.ego@result
+KEGG_UP_df <- up.ekegg@result
+KEGG_DN_df <- down.ekegg@result
+
+GO_UP_df$GeneRatio <- parse_ratio(GO_UP_df$GeneRatio)
+GO_DN_df$GeneRatio <- parse_ratio(GO_DN_df$GeneRatio)
+KEGG_UP_df$GeneRatio <- parse_ratio(KEGG_UP_df$GeneRatio)
+KEGG_DN_df$GeneRatio <- parse_ratio(KEGG_DN_df$GeneRatio)
+
+GO_UP_df <- GO_UP_df[order(GO_UP_df$GeneRatio,decreasing = T),]
+GO_DN_df <- GO_DN_df[order(GO_DN_df$GeneRatio,decreasing = T),]
+KEGG_UP_df <- KEGG_UP_df[order(KEGG_UP_df$GeneRatio,decreasing = T),]
+KEGG_DN_df <- KEGG_DN_df[order(KEGG_DN_df$GeneRatio,decreasing = T),]
+
+GO_UP_df <- subset(GO_UP_df, pvalue < 0.05)
+GO_DN_df <- subset(GO_DN_df, pvalue < 0.05)
+KEGG_UP_df <- subset(KEGG_UP_df, pvalue < 0.05)
+KEGG_DN_df <- subset(KEGG_DN_df, pvalue < 0.05)
+
+GO_UP_df$Group <- "IBC"
+GO_DN_df$Group <- "non-IBC"
+KEGG_UP_df$Group <- "IBC"
+KEGG_DN_df$Group <- "non-IBC"
+
+
+GO_UP_selected <- c("leukocyte mediated immunity",
+                    "positive regulation of T cell activation",
+                    "immune response-regulating signaling pathway",
+                    "positive regulation of leukocyte activation",
+                    "production of molecular mediator of immune response",
+                    "lymphocyte mediated immunity",
+                    "activation of immune response",
+                    "mononuclear cell differentiation",
+                    "T cell proliferation",
+                    "cell chemotaxis")
+
+GO_DN_selected <- c("actin filament organization",
+                    "synaptic vesicle docking",
+                    "collagen-activated tyrosine kinase receptor signaling pathway"
+)
+
+
+GO_df <- rbind(subset(GO_UP_df,Description %in% GO_UP_selected),GO_DN_df[1:10,])
+GO_df <- rbind(subset(GO_UP_df,Description %in% GO_UP_selected))
+
+GO_df$GeneRatio[which(GO_df$Group=="non-IBC")] <- -GO_df$GeneRatio[which(GO_df$Group=="non-IBC")]
+GO_df <- GO_df[order(GO_df$GeneRatio,decreasing = T),]
+
+KEGG_UP_selected <- c("Ribosome",
+                      "Cytokine-cytokine receptor interaction",
+                      "Chemokine signaling pathway",
+                      "Antigen processing and presentation",
+                      "Natural killer cell mediated cytotoxicity",
+                      "Th17 cell differentiation",
+                      "Th1 and Th2 cell differentiation",
+                      "T cell receptor signaling pathway",
+                      "NF-kappa B signaling pathway",
+                      "Toll-like receptor signaling pathway")
+
+KEGG_DN_selected <- c("Oxytocin signaling pathway",
+                      "MAPK signaling pathway",
+                      "alpha-Linolenic acid metabolism",
+                      "Linoleic acid metabolism",
+                      "Ether lipid metabolism",
+                      "Arachidonic acid metabolism",
+                      "Retinol metabolism",
+                      "Fc epsilon RI signaling pathway",
+                      "Drug metabolism - cytochrome P450",
+                      "Metabolism of xenobiotics by cytochrome P450")
+
+KEGG_df <- rbind(subset(KEGG_UP_df, Description %in% KEGG_UP_selected),
+                 subset(KEGG_DN_df, Description %in% KEGG_DN_selected))
+KEGG_df <- rbind(KEGG_UP_df[1:10,],subset(KEGG_DN_df, Description %in% KEGG_DN_selected))
+
+KEGG_df$GeneRatio[which(KEGG_df$Group=="non-IBC")] <- -KEGG_df$GeneRatio[which(KEGG_df$Group=="non-IBC")]
+KEGG_df <- KEGG_df[order(KEGG_df$GeneRatio,decreasing = T),]
+
+### 2.2.3 Bar plot ####
+# 10.7x6 IBC_TCGA_pvalue_GO_Top10/ 9x6 IBC_TCGA_pvalue_KEGG_Top10
+ggplot(KEGG_df, aes(x=reorder(Description,GeneRatio),y=GeneRatio,fill=Group)) + 
+  geom_bar(stat = 'identity',width = 0.5) + 
+  coord_flip() + 
+  theme_bw() + 
+  scale_fill_manual(values=c('red','darkblue')) +
+  theme(panel.grid =element_blank())+
+  theme(panel.border = element_rect(size = 0.6)) + 
+  theme(text = element_text(size = 20,face = "bold"))+
+  scale_y_continuous(labels = abs,expand = expansion(mult = c(0.15, 0.15)))+
+  labs(x = "", y = "Gene Ratio")
+
+
+### 2.2.4 Calculate ssgsea score ####
+KEGG <- getGmt("D:/bioinfo/database/MsigDB/KEGG/KEGG_pathway_ALL_2022.6.23.gmt")
+
+KEGG_RAS <- subset(KEGG, names(KEGG)=="Ras signaling pathway")
+KEGG_NOTCH <- subset(KEGG, names(KEGG)=="Notch signaling pathway")
+KEGG_PI3K <- subset(KEGG, names(KEGG)=="PI3K-Akt signaling pathway")
+KEGG_Hedgehog <- subset(KEGG, names(KEGG)=="Hedgehog signaling pathway")
+
+target_pathways <- subset(KEGG, names(KEGG) %in% c("Ras signaling pathway","Notch signaling pathway","PI3K-Akt signaling pathway","Hedgehog signaling pathway"))
+target_pathways <- subset(KEGG, names(KEGG) %in% c("Ras signaling pathway"))
+
+
+ssgsea_score <- gsva(expr=as.matrix(adj_counts), gset.idx.list = target_pathways, method="gsva", kcdf="Poisson", abs.ranking=T, verbose=T)
+ssgsea_score <- gsva(expr=as.matrix(quant.files), gset.idx.list = target_pathways, method="ssgsea", kcdf="Poisson", abs.ranking=T, verbose=T)
+
+ssgsea_score <- as.data.frame(t(ssgsea_score))
+ssgsea_score$group <- c(rep("IBC",16),rep("non-IBC",38))
+ssgsea_score_melt <- melt(ssgsea_score,id.vars = "group",variable.name = "Pathway_name",value.name = "ssgsea_Score")
+ssgsea_score_melt$ssgsea_Score <- as.numeric(ssgsea_score_melt$ssgsea_Score)
+
+#
+ggplot(ssgsea_score_melt,aes(x=Pathway_name,y=ssgsea_Score,fill=group)) + 
+  stat_boxplot(geom = "errorbar",width=0.5) +
+  geom_boxplot(width=0.5) + 
+  theme_bw() + 
+  RotatedAxis() +
+  stat_compare_means(method = "wilcox.test",size=5,angle=0,vjust = 2)+
+  labs(x=' ', 
+       y='ssgsea score', 
+       title="")+
+  scale_fill_manual(values = c("#FFBE7A","#8ECFC9"))+
+  theme(axis.text.x = element_text(size = 12, 
+                                   color = "black", 
+                                   #face = "bold", 
+                                   vjust = 0.5, hjust = 0.5, angle = 0))+
+  theme_bw() + theme(panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                     panel.grid.major.x = element_blank(),
+                     panel.grid.minor.x = element_blank())
+
+
+### 2.2.5  ESTIMATE analysis ####
+filterCommonGenes(input.f="D:/bioinfo/project/IBC_Skin/input_files/IBC_TCGA_adj.TPM_filtered.txt", 
+                  output.f="D:/bioinfo/project/IBC_Skin/input_files/IBC_TCGA_adj.TPM_filtered_ESTIMATE_input.gct", 
+                  id="GeneSymbol")
+
+
+estimateScore(input.ds = "D:/bioinfo/project/IBC_Skin/input_files/IBC_TCGA_adj.TPM_filtered_ESTIMATE_input.gct",
+              output.ds="D:/bioinfo/project/IBC_Skin/input_files/IBC_TCGA_adj.TPM_filtered_ESTIMATE_output.gct", 
+              platform="illumina")
+
+
+plotPurity(scores="D:/bioinfo/project/IBC_Skin/input_files/IBC_TCGA_adj.TPM_filtered_ESTIMATE_output.gct", 
+           samples="all_samples",
+           platform="illumina",
+           output.dir="D:/bioinfo/project/IBC_Skin/output_files/RNA/ESTIMATE")
+
+scores=read.table("D:/bioinfo/project/IBC_Skin/input_files/IBC_TCGA_adj.TPM_filtered_ESTIMATE_output.gct",skip = 2,header = T)
+rownames(scores)=scores[,1]
+scores=as.data.frame(t(scores[,3:ncol(scores)]))
+scores$group <- c(rep("IBC",16),rep("non-IBC",38))
+scores_melt <- melt(scores,id.vars = "group",variable.name = "Score_name",value.name = "Score")
+
+# 8x6
+ggplot(scores_melt,aes(x=Score_name,y=Score,fill=group)) + 
+  stat_boxplot(geom = "errorbar",width=0.5) +
+  geom_boxplot(width=0.5) + 
+  theme_bw() + 
+  RotatedAxis() +
+  stat_compare_means(method = "wilcox.test",size=5,angle=0,vjust = 2)+
+  scale_fill_manual(values = c("#FFBE7A","#8ECFC9"))+
+  labs(x=' ', 
+       y='ESTIMATE score', 
+       title="")+
+  theme(axis.text.x = element_text(size = 12, 
+                                   color = "black", 
+                                   #face = "bold", 
+                                   vjust = 0.5, hjust = 0.5, angle = 0))+
+  theme_bw() + 
+  theme(panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank())          
+
+### 2.2.6 XCELL analysis ####
+exp.file <- read.table("D:/bioinfo/project/IBC_Skin/input_files/IBC_TCGA_adj.TPM.txt")
+exp.file <- quant.files
+
+xcell_result <- xCellAnalysis(exp.file)
+t_xcell_result <- as.data.frame(t(xcell_result))
+
+t_xcell_result$group <- c(rep("IBC",16),rep("non-IBC",38))
+
+t_xcell_result$SampleID <- rownames(t_xcell_result)
+
+t_xcell_result$SampleID <- gsub("\\.","-",t_xcell_result$SampleID)
+t_xcell_result$SampleID[which(t_xcell_result$group=="non-IBC")] <- substr(t_xcell_result$SampleID[which(t_xcell_result$group=="non-IBC")],1,12)
+t_xcell_result <- merge(t_xcell_result,IBC_TCGA_clinical,by="SampleID")
+write.table(t_xcell_result,"D:/bioinfo/project/IBC_Skin/output_files/RNA/XCELL/t_xcell_result.txt",col.names = T,row.names = F,sep = '\t',quote = F)
+
+t_xcell_result_env <- t_xcell_result[,c("SampleID","Group","ImmuneScore","StromaScore","MicroenvironmentScore")]
+t_xcell_result_env_melt <- melt(t_xcell_result_env,
+                                id.vars=c("SampleID","Group"),
+                                #measure.vars = , 
+                                variable.name = "ScoreType",
+                                value.name = "score")
+t_xcell_result_env_melt$ScoreType <- factor(t_xcell_result_env_melt$ScoreType,levels = c("StromaScore","ImmuneScore","MicroenvironmentScore"))
+
+xcell_result_melt <- melt(t_xcell_result,
+                          id.vars=c("ImmuneScore","StromaScore","MicroenvironmentScore","Group","group","SampleID","Sample_barcode","Subtype","batch"),
+                          #measure.vars = , 
+                          variable.name = "cell_type",
+                          value.name = "celltype_percentage")
+
+xcell_result_melt <- subset(xcell_result_melt, !(cell_type %in% c("Astrocytes","Chondrocytes","Hepatocytes","Mesangial cells","Neurons","Osteoblast","Skeletal muscle","Smooth muscle")))
+write.table(xcell_result_melt,"D:/bioinfo/project/IBC_Skin/output_files/RNA/XCELL/xcell_result_melt.txt",col.names = T,row.names = F,sep = '\t',quote = F)
+
+sig_celltypes <- c("aDC",
+                   "cDC",
+                   "iDC",
+                   "pDC",
+                   "CD4+ naive T-cells",
+                   "CD4+ memory T-cells",
+                   "CD4+ Tcm","CD4+ Tem",
+                   "CD8+ naive T-cells",
+                   "CD8+ Tcm","CD8+ Tem",
+                   "NKT",
+                   "Monocytes",
+                   "Macrophages M1",
+                   "Macrophages M2",
+                   "ly Endothelial cells",
+                   "mv Endothelial cells",
+                   "Pericytes")
+
+xcell_result_melt_sig <- subset(xcell_result_melt,cell_type %in% sig_celltypes)
+xcell_result_melt_sig$cell_type <- factor(xcell_result_melt_sig$cell_type,levels = sig_celltypes)
+DC_cells <- c("aDC",
+              "cDC",
+              "iDC",
+              "pDC")
+
+CD4_cells <- c("CD4+ naive T-cells",
+               "CD4+ memory T-cells",
+               "CD4+ Tcm","CD4+ Tem")
+
+CD8_cells <- c("CD8+ naive T-cells",
+               "CD8+ Tcm","CD8+ Tem","NKT")
+
+Mono_Macro <- c("Monocytes","Macrophages M1","Macrophages M2")
+
+# 8x24
+ggplot(subset(xcell_result_melt_sig,cell_type %in% c(CD4_cells)),aes(x=cell_type,y=celltype_percentage,fill=group)) + 
+  #stat_boxplot(geom = "errorbar",width=0.5) +
+  scale_y_continuous(limits = quantile(xcell_result_melt_sig$celltype_percentage, c(0.1, 0.95)))+ # 缩放
+  geom_boxplot(width=0.5,outlier.shape = NA) + 
+  theme_bw() + 
+  RotatedAxis() +
+  scale_fill_manual(values = c("#FFBE7A","#8ECFC9"))+
+  stat_compare_means(method = "wilcox.test",
+                     size=2,angle=45,vjust = 2)+
+  labs(x='', y='XCELL score', title="")+
+  theme_bw() + theme(panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                     panel.grid.major.x = element_blank(),
+                     panel.grid.minor.x = element_blank()) #(17x10)
+
+ggplot(xcell_result_melt,aes(x=group,y=celltype_percentage,fill=group)) + 
+  facet_wrap(~cell_type,scales = "free_y")+
+  stat_boxplot(geom = "errorbar",width=0.5) +
+  geom_boxplot(width=0.5) + 
+  #geom_jitter(aes(celltype, percentage, fill=group),position=position_jitter(width = 0.25, height=0),alpha=0.5,size=0.8)+
+  theme_bw() + 
+  RotatedAxis() +
+  scale_fill_manual(values = c("#FFBE7A","#8ECFC9"))+
+  stat_compare_means(comparisons = list(c("IBC","non-IBC")),
+                     method = "wilcox.test",
+                     size=4,angle=0,vjust = 2)+
+  labs(x='', y='Xcell score', title="")+
+  theme_bw() + theme(panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                     panel.grid.major.x = element_blank(),
+                     panel.grid.minor.x = element_blank()) #(17x10)
+
+#8x6
+ggplot(t_xcell_result_env_melt,aes(x=ScoreType,y=score,fill=Group)) + 
+  #facet_wrap(~ScoreType,scales = "free_y")+
+  stat_boxplot(geom = "errorbar",width=0.5) +
+  geom_boxplot(width=0.5) + 
+  RotatedAxis() +
+  scale_fill_manual(values = c("#FFBE7A","#8ECFC9"))+
+  stat_compare_means(#comparisons = list(c("IBC","non-IBC")),
+    method = "wilcox.test",
+    size=4,angle=0,vjust = 2)+
+  labs(x='', y='Xcell score', title="")+
+  theme_bw() + theme(panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                     panel.grid.major.x = element_blank(),
+                     panel.grid.minor.x = element_blank())
+
+ggplot(t_xcell_result_env_melt,aes(x=Group,y=score,fill=Group)) + 
+  facet_wrap(~ScoreType,scales = "free_y")+
+  stat_boxplot(geom = "errorbar",width=0.5) +
+  geom_boxplot(width=0.5) + 
+  #geom_jitter(aes(celltype, percentage, fill=group),position=position_jitter(width = 0.25, height=0),alpha=0.5,size=0.8)+
+  theme_bw() + 
+  RotatedAxis() +
+  scale_fill_manual(values = c("#FFBE7A","#8ECFC9"))+
+  stat_compare_means(comparisons = list(c("IBC","non-IBC")),
+                     method = "wilcox.test",
+                     size=4,angle=0,vjust = 2)+
+  labs(x='', y='Xcell score', title="")+
+  theme_bw() + theme(panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                     panel.grid.major.x = element_blank(),
+                     panel.grid.minor.x = element_blank())
+
+ggplot(subset(xcell_result_melt,cell_type %in% sig_celltypes),aes(x=group,y=celltype_percentage,fill=group)) + 
+  #facet_wrap(~cell_type,scales = "free_y")+
+  stat_boxplot(geom = "errorbar",width=0.5) +
+  geom_boxplot(width=0.5) + 
+  #geom_jitter(aes(celltype, percentage, fill=group),position=position_jitter(width = 0.25, height=0),alpha=0.5,size=0.8)+
+  theme_bw() + 
+  RotatedAxis() +
+  scale_fill_manual(values = c("#FFBE7A","#8ECFC9"))+
+  stat_compare_means(comparisons = list(c("IBC","non-IBC")),
+                     method = "wilcox.test",
+                     size=4,angle=0,vjust = 2)+
+  labs(x='', y='Xcell score', title="")+
+  theme_bw() + theme(panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                     panel.grid.major.x = element_blank(),
+                     panel.grid.minor.x = element_blank()) #(17x10)
+
+
+ggplot(subset(xcell_result_melt, Subtype=="TNBC"),aes(x=group,y=celltype_percentage,fill=group)) + 
+  facet_wrap(~cell_type)+
+  stat_boxplot(geom = "errorbar",width=0.5) +
+  geom_boxplot(width=0.5) + 
+  #geom_jitter(aes(celltype, percentage, fill=group),position=position_jitter(width = 0.25, height=0),alpha=0.5,size=0.8)+
+  theme_bw() + 
+  RotatedAxis() +
+  scale_fill_manual(values = c("#FFBE7A","#8ECFC9"))+
+  stat_compare_means(method = "wilcox.test",
+                     size=4,angle=0,vjust = 2)+
+  labs(x='celltype', y='celltype_percentage', title="XCELL 64 subtypes") #(14x14)
+
+ggplot(subset(xcell_result_melt, Subtype=="HER2+"),aes(x=group,y=celltype_percentage,fill=group)) + 
+  facet_wrap(~cell_type)+
+  stat_boxplot(geom = "errorbar",width=0.5) +
+  geom_boxplot(width=0.5) + 
+  #geom_jitter(aes(celltype, percentage, fill=group),position=position_jitter(width = 0.25, height=0),alpha=0.5,size=0.8)+
+  theme_bw() + 
+  RotatedAxis() +
+  scale_fill_manual(values = c("#FFBE7A","#8ECFC9"))+
+  stat_compare_means(method = "wilcox.test",
+                     size=4,angle=0,vjust = 2)+
+  labs(x='celltype', y='celltype_percentage', title="XCELL 64 subtypes") #(14x14)
+
+ggplot(xcell_result_melt,aes(x=group,y=ImmuneScore,fill=group)) + 
+  stat_boxplot(geom = "errorbar",width=0.5) +
+  geom_boxplot(width=0.5) + 
+  #geom_jitter(aes(celltype, percentage, fill=group),position=position_jitter(width = 0.25, height=0),alpha=0.5,size=0.8)+
+  theme_bw() + 
+  RotatedAxis() +
+  #geom_signif(step_increase = 0.1, map_signif_level = F,test = wilcox.test) +
+  stat_compare_means(comparisons = list(c("IBC","non-IBC")), method = "wilcox.test",size=4,angle=0,vjust = 2)+
+  labs(x='group', y='Immune Score', title="XCELL")
+
+ggplot(xcell_result_melt,aes(x=group,y=StromaScore,fill=group)) + 
+  stat_boxplot(geom = "errorbar",width=0.5) +
+  geom_boxplot(width=0.5) + 
+  #geom_jitter(aes(celltype, percentage, fill=group),position=position_jitter(width = 0.25, height=0),alpha=0.5,size=0.8)+
+  theme_bw() + 
+  RotatedAxis() +
+  #geom_signif(step_increase = 0.1, map_signif_level = F,test = wilcox.test) +
+  stat_compare_means(comparisons = list(c("IBC","non-IBC")), method = "wilcox.test",size=4,angle=0,vjust = 2)+
+  labs(x='group', y='Stroma Score', title="XCELL")
+
+xcell_result_melt_subset <- subset(xcell_result_melt,cell_type %in% c("aDC","cDC","iDC","DC","CD4+ memory T-cells","CD8+ naive T-cells","Fibroblasts","Macrophages M1","Macrophages M2","NK cells","NKT","Th1 cells","Th2 cells","Tregs"))
+xcell_result_melt_subset <- subset(xcell_result_melt,cell_type %in% c("aDC","cDC","iDC","DC"))
+xcell_result_melt_subset <- subset(xcell_result_melt,cell_type %in% c("NK cells","NKT"))
+xcell_result_melt_subset <- subset(xcell_result_melt,cell_type %in% c("CD4+ memory T-cells","CD4+ naive T-cells","CD4+ T-cells","CD4+ Tcm","CD4+ Tem"))
+xcell_result_melt_subset <- subset(xcell_result_melt,cell_type %in% c("CD8+ naive T-cells","CD8+ T-cells","CD8+ Tcm","CD8+ Tem"))
+xcell_result_melt_subset <- subset(xcell_result_melt,cell_type %in% c("B-cells","Memory B-cells","naive B-cells","Plasma cells","pro B-cells"))
+xcell_result_melt_subset <- subset(xcell_result_melt,cell_type %in% c("Th1 cells","Th2 cells"))
+xcell_result_melt_subset <- subset(xcell_result_melt,cell_type %in% c("Tregs"))
+xcell_result_melt_subset <- subset(xcell_result_melt,cell_type %in% c("Monocytes","Macrophages M1","Macrophages M2"))
+xcell_result_melt_subset <- subset(xcell_result_melt,cell_type %in% c("MSC","Adipocytes","Preadipocytes","Fibroblasts"))
+xcell_result_melt_subset <- subset(xcell_result_melt,cell_type %in% c("Pericytes","Endothelial cells","ly Endothelial cells","mv Endothelial cells"))
+
+ggplot(xcell_result_melt_subset,aes(x=cell_type,y=celltype_percentage,fill=group)) + 
+  stat_boxplot(geom = "errorbar",width=0.5) +
+  geom_boxplot(width=0.5) + 
+  #geom_jitter(aes(celltype, percentage, fill=group),position=position_jitter(width = 0.25, height=0),alpha=0.5,size=0.8)+
+  theme_bw() + 
+  RotatedAxis() +
+  #geom_signif(step_increase = 0.1, map_signif_level = F,test = wilcox.test) +
+  stat_compare_means(method = "wilcox.test",size=3,angle=30,vjust = 2)+
+  labs(x='celltype', y='celltype_percentage', title="XCELL")
+
+ggplot(subset(xcell_result_melt_subset, Subtype =="TNBC"),aes(x=cell_type,y=celltype_percentage,fill=group)) + 
+  stat_boxplot(geom = "errorbar",width=0.5) +
+  geom_boxplot(width=0.5) + 
+  #geom_jitter(aes(celltype, percentage, fill=group),position=position_jitter(width = 0.25, height=0),alpha=0.5,size=0.8)+
+  theme_bw() + 
+  RotatedAxis() +
+  #geom_signif(step_increase = 0.1, map_signif_level = F,test = wilcox.test) +
+  stat_compare_means(method = "wilcox.test",size=3,angle=30,vjust = 2)+
+  labs(x='celltype', y='celltype_percentage', title="XCELL")
+
+ggplot(result_melt_subset,aes(x=cell_type,y=ImmuneScore,fill=group)) + 
+  stat_boxplot(geom = "errorbar",width=0.5) +
+  geom_boxplot(width=0.5) + 
+  #geom_jitter(aes(celltype, percentage, fill=group),position=position_jitter(width = 0.25, height=0),alpha=0.5,size=0.8)+
+  theme_bw() + 
+  RotatedAxis() +
+  #geom_signif(step_increase = 0.1, map_signif_level = F,test = wilcox.test) +
+  stat_compare_means(method = "wilcox.test",size=3,angle=30,vjust = 2)+
+  labs(x='celltype', y='Immune Score', title="XCELL")
+
+### 2.2.7 Gene fusion plot ####
+cytoband = read.table(system.file(package = "circlize", "extdata", "cytoBand.txt"),
+                      colClasses = c("character", "numeric", "numeric", "character", "character"), sep = "\t")
+circos.initializeWithIdeogram(species = "hg38")
+
+## Load IBC,nonIBC,33TCGA star fusion files
+starfusion_result_path <- "D:/bioinfo/project/IBC_Skin/output_files/RNA/STAR_Fusion_hg38/"
+starfusion_result_file_names <- list.files(path='D:/bioinfo/project/IBC_Skin/output_files/RNA/STAR_Fusion_hg38/', pattern='.abridged.tsv$')
+
+fusion_result <- data.frame(matrix(ncol = 19, nrow = 0))
+for (file_name in starfusion_result_file_names){
+  starfusion_file_path <- paste0(starfusion_result_path,file_name)
+  file_name <- strsplit(file_name,"_",fixed = T)[[1]][1]
+  if (stringr::str_detect(file_name,"TCGA")){sampleID <- substr(file_name,1,12)} else{sampleID <- file_name}
+  tmp_var_name <- paste0(sampleID,"_fusion_result")
+  try(assign(tmp_var_name, read.table(starfusion_file_path, header = F,sep = '\t')),silent = T)
+  if (exists(tmp_var_name) == TRUE){
+    if (stringr::str_detect(file_name,"TCGA")){
+      try(assign(tmp_var_name, `[[<-`(get(tmp_var_name), "Group", value = "non-IBC")),silent = T)
+      try(assign(tmp_var_name, `[[<-`(get(tmp_var_name), "Batch", value = "TCGA-BRCA")),silent = T)
+      try(assign(tmp_var_name, `[[<-`(get(tmp_var_name), "id", value = sampleID)),silent = T)
+      try(assign(tmp_var_name, `[[<-`(get(tmp_var_name), "SampleType", value = "Tumor")),silent = T)
+      try(fusion_result <- rbind(fusion_result,get(tmp_var_name)),silent = T)
+    }
+    else if (stringr::str_detect(file_name,"nonIBC")){
+      try(assign(tmp_var_name, `[[<-`(get(tmp_var_name), "Group", value = "non-IBC")),silent = T)
+      try(assign(tmp_var_name, `[[<-`(get(tmp_var_name), "Batch", value = "self")),silent = T)
+      try(assign(tmp_var_name, `[[<-`(get(tmp_var_name), "id", value = sampleID)),silent = T)
+      try(assign(tmp_var_name, `[[<-`(get(tmp_var_name), "SampleType", value = "Tumor")),silent = T)
+      try(fusion_result <- rbind(fusion_result,get(tmp_var_name)),silent = T)
+    }
+    else {
+      try(assign(tmp_var_name, `[[<-`(get(tmp_var_name), "Group", value = "IBC")),silent = T)
+      try(assign(tmp_var_name, `[[<-`(get(tmp_var_name), "Batch", value = "self")),silent = T)
+      try(assign(tmp_var_name, `[[<-`(get(tmp_var_name), "id", value = sampleID)),silent = T)
+      try(assign(tmp_var_name, `[[<-`(get(tmp_var_name), "SampleType", value = "Tumor")),silent = T)
+      try(fusion_result <- rbind(fusion_result,get(tmp_var_name)),silent = T)
+    }
+  }
+}
+
+colnames(fusion_result) <- c("#FusionName","JunctionReadCount","SpanningFragCount","est_J","est_S","SpliceType","LeftGene","LeftBreakpoint","RightGene","RightBreakpoint","LargeAnchorSupport","FFPM","LeftBreakDinuc","LeftBreakEntropy","RightBreakDinuc","RightBreakEntropy","annots","Group","Batch","id","SampleType")
+fusion_result_filtered <- fusion_result [!duplicated(fusion_result[c("#FusionName","id")]),]
+fusion_result_filtered <- subset(fusion_result_filtered, select = -c(est_J,est_S))
+
+IBC_fusion <- subset(fusion_result_filtered, Group=="IBC")
+nonIBC_fusion <- subset(fusion_result_filtered, Group=="non-IBC")
+
+# Load TCGA non-IBC star fusion files
+BRCA_raw_SV <- read.table("33TCGA_BRCA_raw_SV_manifest.txt",header = T,sep = '\t',stringsAsFactors = F)
+
+starfusion_result_path <- "D:/bioinfo/database/TCGA_BRCA/GDCdata/TCGA-BRCA/harmonized/Structural_Variation/STAR-Fusion/"
+starfusion_result_dir_names <- BRCA_raw_SV$id
+
+normal_fusion_result <- data.frame(matrix(ncol = 18, nrow = 0))
+for (dir_name in starfusion_result_dir_names){
+  starfusion_result_file_names <- list.files(path=paste0(starfusion_result_path,dir_name), pattern='.tsv$')
+  starfusion_file_path <- paste0(starfusion_result_path,dir_name,"/",starfusion_result_file_names)
+  sampleID <- subset(BRCA_raw_SV, id %in% dir_name)$`cases.submitter_id`
+  tmp_var_name <- paste0(sampleID,"_fusion_result")
+  try(assign(tmp_var_name, read.table(starfusion_file_path, header = F,sep = '\t')),silent = T)
+  if (exists(tmp_var_name) == TRUE){
+    try(assign(tmp_var_name, `[[<-`(get(tmp_var_name), "Group", value = "non-IBC")),silent = T)
+    try(assign(tmp_var_name, `[[<-`(get(tmp_var_name), "Batch", value = "TCGA-BRCA")),silent = T)
+    try(assign(tmp_var_name, `[[<-`(get(tmp_var_name), "id", value = sampleID)),silent = T)
+    try(assign(tmp_var_name, `[[<-`(get(tmp_var_name), "SampleType", value = "Normal")),silent = T)
+    try(normal_fusion_result <- rbind(normal_fusion_result,get(tmp_var_name)),silent = T)
+  }
+}
+
+colnames(normal_fusion_result) <- c("#FusionName","JunctionReadCount","SpanningFragCount","SpliceType","LeftGene","LeftBreakpoint","RightGene","RightBreakpoint","JunctionReads","SpanningFrags","LargeAnchorSupport","FFPM","LeftBreakDinuc","LeftBreakEntropy","RightBreakDinuc","RightBreakEntropy","annots","Group","Batch","id","SampleType")
+normal_fusion_result <- normal_fusion_result[,colnames(fusion_result_filtered)]
+normal_fusion_result_filtered <- normal_fusion_result [!duplicated(normal_fusion_result[c("#FusionName","id")]),]
+normal_fusion <- normal_fusion_result_filtered
+
+## Create dataframe for fisher exact 
+IBC_Fusion_df <- as.data.frame(table(IBC_fusion$`#FusionName`))
+IBC_Fusion_df <- IBC_Fusion_df[order(IBC_Fusion_df$Freq,decreasing = T),]
+IBC_Fusion_df$percentage <- IBC_Fusion_df$Freq*100/16
+
+nonIBC_Fusion_df <- as.data.frame(table(nonIBC_fusion$`#FusionName`))
+nonIBC_Fusion_df <- nonIBC_Fusion_df[order(nonIBC_Fusion_df$Freq,decreasing = T),]
+nonIBC_Fusion_df$percentage <- nonIBC_Fusion_df$Freq*100/38
+
+normal_fusion_df <- as.data.frame(table(normal_fusion$`#FusionName`))
+normal_fusion_df <- normal_fusion_df[order(normal_fusion_df$Freq,decreasing = T),]
+normal_fusion_df$percentage <- normal_fusion_df$Freq*100/113
+
+IBC_Fusion_df$Group <- "IBC"
+nonIBC_Fusion_df$Group <- "non-IBC"
+normal_fusion_df$Group <- "normal"
+
+IBC_normal_fusion <- rbind(IBC_Fusion_df,normal_fusion_df)
+nonIBC_normal_fusion <- rbind(nonIBC_Fusion_df,normal_fusion_df)
+
+# IBC vs normal fusion to select somatic fusion
+IBC_normal_fusion_fisher_input <- data.frame(fusion_name=IBC_normal_fusion$Var1,count=IBC_normal_fusion$Freq,group=IBC_normal_fusion$Group)
+IBC_normal_fusion_fisher_input <- spread(IBC_normal_fusion_fisher_input,group,count) 
+rownames(IBC_normal_fusion_fisher_input) <- IBC_normal_fusion_fisher_input$fusion_name
+IBC_normal_fusion_fisher_input$fusion_name <- NULL
+IBC_normal_fusion_fisher_input[is.na(IBC_normal_fusion_fisher_input)] <- 0
+colnames(IBC_normal_fusion_fisher_input) <- c("IBC-fusion_count","normal-fusion_count")
+IBC_normal_fusion_fisher_input$`IBC-nofusion_count` <- 16-IBC_normal_fusion_fisher_input$`IBC-fusion_count`
+IBC_normal_fusion_fisher_input$`normal-nofusion_count` <- 113-IBC_normal_fusion_fisher_input$`normal-fusion_count`
+IBC_normal_fusion_fisher_input <- IBC_normal_fusion_fisher_input[,c(1,3,2,4)]
+
+IBC_normal_fusion_fisher_output <- data.frame()
+for (i in 1:nrow(IBC_normal_fusion_fisher_input)){
+  t <- fisher.test(matrix(as.vector(t(IBC_normal_fusion_fisher_input[i, 1:4])), ncol=2))
+  d <- IBC_normal_fusion_fisher_input[i, ]
+  d$p.value <- t$p.value
+  d$OR <- t$estimate[[1]]
+  d$OR.lower95 <- t$conf.int[1]
+  d$OR.upper95 <- t$conf.int[2]
+  IBC_normal_fusion_fisher_output <- rbind(IBC_normal_fusion_fisher_output, d)
+}
+IBC_normal_fusion_fisher_output <- subset(IBC_normal_fusion_fisher_output,p.value<0.05)
+
+# nonIBC vs normal fusion to select somatic fusion
+nonIBC_normal_fusion_fisher_input <- data.frame(fusion_name=nonIBC_normal_fusion$Var1,count=nonIBC_normal_fusion$Freq,group=nonIBC_normal_fusion$Group)
+nonIBC_normal_fusion_fisher_input <- spread(nonIBC_normal_fusion_fisher_input,group,count) 
+rownames(nonIBC_normal_fusion_fisher_input) <- nonIBC_normal_fusion_fisher_input$fusion_name
+nonIBC_normal_fusion_fisher_input$fusion_name <- NULL
+nonIBC_normal_fusion_fisher_input[is.na(nonIBC_normal_fusion_fisher_input)] <- 0
+colnames(nonIBC_normal_fusion_fisher_input) <- c("nonIBC-fusion_count","normal-fusion_count")
+nonIBC_normal_fusion_fisher_input$`nonIBC-nofusion_count` <- 38-nonIBC_normal_fusion_fisher_input$`nonIBC-fusion_count`
+nonIBC_normal_fusion_fisher_input$`normal-nofusion_count` <- 113-nonIBC_normal_fusion_fisher_input$`normal-fusion_count`
+nonIBC_normal_fusion_fisher_input <- nonIBC_normal_fusion_fisher_input[,c(1,3,2,4)]
+
+nonIBC_normal_fusion_fisher_output <- data.frame()
+for (i in 1:nrow(nonIBC_normal_fusion_fisher_input)){
+  t <- fisher.test(matrix(as.vector(t(nonIBC_normal_fusion_fisher_input[i, 1:4])), ncol=2))
+  d <- nonIBC_normal_fusion_fisher_input[i, ]
+  d$p.value <- t$p.value
+  d$OR <- t$estimate[[1]]
+  d$OR.lower95 <- t$conf.int[1]
+  d$OR.upper95 <- t$conf.int[2]
+  nonIBC_normal_fusion_fisher_output <- rbind(nonIBC_normal_fusion_fisher_output, d)
+}
+nonIBC_normal_fusion_fisher_output <- subset(nonIBC_normal_fusion_fisher_output,p.value<0.05)
+
+# selecting IBC somatic fusion and nonIBC somatic fusion to perform fisher exact
+
+IBC_fusion_somatic <- subset(IBC_Fusion_df, Var1 %in% c(rownames(IBC_normal_fusion_fisher_output),rownames(nonIBC_normal_fusion_fisher_output)))
+nonIBC_fusion_somatic <- subset(nonIBC_Fusion_df, Var1 %in% c(rownames(IBC_normal_fusion_fisher_output),rownames(nonIBC_normal_fusion_fisher_output)))
+
+IBC_nonIBC_fusion_somatic <- rbind(IBC_fusion_somatic,nonIBC_fusion_somatic)
+
+IBC_nonIBC_fusion_fisher_input <- data.frame(fusion_name=IBC_nonIBC_fusion_somatic$Var1,count=IBC_nonIBC_fusion_somatic$Freq,group=IBC_nonIBC_fusion_somatic$Group)
+IBC_nonIBC_fusion_fisher_input <- spread(IBC_nonIBC_fusion_fisher_input,group,count) 
+rownames(IBC_nonIBC_fusion_fisher_input) <- IBC_nonIBC_fusion_fisher_input$fusion_name
+IBC_nonIBC_fusion_fisher_input$fusion_name <- NULL
+IBC_nonIBC_fusion_fisher_input[is.na(IBC_nonIBC_fusion_fisher_input)] <- 0
+colnames(IBC_nonIBC_fusion_fisher_input) <- c("IBC-fusion_count","nonIBC-fusion_count")
+IBC_nonIBC_fusion_fisher_input$`IBC-nofusion_count` <- 16-IBC_nonIBC_fusion_fisher_input$`IBC-fusion_count`
+IBC_nonIBC_fusion_fisher_input$`nonIBC-nofusion_count` <- 38-IBC_nonIBC_fusion_fisher_input$`nonIBC-fusion_count`
+IBC_nonIBC_fusion_fisher_input <- IBC_nonIBC_fusion_fisher_input[,c(1,3,2,4)]
+
+IBC_nonIBC_fusion_fisher_output <- data.frame()
+for (i in 1:nrow(IBC_nonIBC_fusion_fisher_input)){
+  t <- fisher.test(matrix(as.vector(t(IBC_nonIBC_fusion_fisher_input[i, 1:4])), ncol=2))
+  d <- IBC_nonIBC_fusion_fisher_input[i, ]
+  d$p.value <- t$p.value
+  d$OR <- t$estimate[[1]]
+  d$OR.lower95 <- t$conf.int[1]
+  d$OR.upper95 <- t$conf.int[2]
+  IBC_nonIBC_fusion_fisher_output <- rbind(IBC_nonIBC_fusion_fisher_output, d)
+}
+IBC_nonIBC_fusion_fisher_output <- subset(IBC_nonIBC_fusion_fisher_output,p.value<0.05)
+
+write.table(IBC_nonIBC_fusion_fisher_output,"D:/bioinfo/project/IBC_Skin/output_files/RNA/STAR_Fusion/IBC_nonIBC_fusion_fisher_output.txt",row.names = T,col.names = T,sep = '\t',quote = F)
+
+
+View(subset(IBC_nonIBC_fusion_somatic, Var1 %in% rownames(IBC_nonIBC_fusion_fisher_output)))
+
+IBC_nonIBC_fusion_somatic_final <- subset(IBC_nonIBC_fusion_somatic, Var1 %in% rownames(IBC_nonIBC_fusion_fisher_output))
+IBC_nonIBC_fusion_somatic_final$percentage <- round(IBC_nonIBC_fusion_somatic_final$percentage,2)
+#IBC_nonIBC_fusion_somatic_final$percentage <- IBC_nonIBC_fusion_somatic_final$percentage/100
+#IBC_nonIBC_fusion_somatic_final$percentage[which(IBC_nonIBC_fusion_somatic_final$Group=="non-IBC")] <- IBC_nonIBC_fusion_somatic_final$percentage[which(IBC_nonIBC_fusion_somatic_final$Group=="non-IBC")]*-1
+
+# 7x6
+ggplot(data=IBC_nonIBC_fusion_somatic_final, mapping=aes(x=Group,y=percentage,fill=Group))+
+  facet_wrap(~Var1)+
+  #scale_y_continuous(labels = scales::percent_format(accuracy = 1))+
+  geom_bar(stat="identity",position='dodge')+
+  scale_fill_manual(values = c("#FFBE7A","#8ECFC9"))+
+  xlab("") + 
+  ylim(0,100) +
+  ylab("Gene fusion occurred in % of samples") +
+  geom_text(stat='identity',aes(label=paste0(percentage,"%")), color="black", size=3.5, vjust=-0.5)+
+  theme_bw() + theme(panel.grid.major.y = element_blank(),
+                     panel.grid.minor.y = element_blank(),
+                     panel.grid.major.x = element_blank(),
+                     panel.grid.minor.x = element_blank())
+
+
+IBC_nonIBC_fusion_somatic_final2 <- IBC_nonIBC_fusion_somatic_final
+IBC_nonIBC_fusion_somatic_final2$percentage[which(IBC_nonIBC_fusion_somatic_final2$Group=="non-IBC")] <- -1*IBC_nonIBC_fusion_somatic_final2$percentage[which(IBC_nonIBC_fusion_somatic_final2$Group=="non-IBC")]
+
+ggplot(IBC_nonIBC_fusion_somatic_final2, aes(x=reorder(Var1,percentage),y=percentage,fill=Group)) + 
+  geom_bar(stat = 'identity',width = 0.5) + 
+  coord_flip() + 
+  theme_bw() + #去除背景色
+  scale_fill_manual(values=c('red','darkblue')) +
+  theme(panel.grid =element_blank())+
+  theme(panel.border = element_rect(size = 0.6)) + 
+  theme(text = element_text(size = 20,face = "bold"))+
+  scale_y_continuous(labels = abs,expand = expansion(mult = c(0.15, 0.15))
+                     #,limits = c(-100,100)
+  )+
+  labs(x = "", y = "percentage (%)")
+
+IBC_somatic_fusion <- subset(IBC_fusion,`#FusionName` %in% subset(IBC_nonIBC_fusion_somatic_final,Group=="IBC")$Var1)
+IBC_somatic_fusion <- IBC_somatic_fusion[!duplicated(IBC_somatic_fusion$`#FusionName`),]
+
+nonIBC_somatic_fusion <- subset(nonIBC_fusion,`#FusionName` %in% subset(IBC_nonIBC_fusion_somatic_final,Group=="non-IBC")$Var1)
+nonIBC_somatic_fusion <- nonIBC_somatic_fusion[!duplicated(nonIBC_somatic_fusion$`#FusionName`),]
+
+somatic_fusion <- rbind(IBC_somatic_fusion,nonIBC_somatic_fusion)
+write.table(somatic_fusion,"D:/bioinfo/project/IBC_Skin/output_files/RNA/STAR_Fusion_hg38/hg38_somatic_fusion.tsv",row.names = F,col.names = T,sep='\t',quote = F)
+write.table(IBC_somatic_fusion,"D:/bioinfo/project/IBC_Skin/output_files/RNA/STAR_Fusion_hg38/hg38_IBC_somatic_fusion.tsv",row.names = F,col.names = T,sep='\t',quote = F)
+write.table(nonIBC_somatic_fusion,"D:/bioinfo/project/IBC_Skin/output_files/RNA/STAR_Fusion_hg38/hg38_nonIBC_somatic_fusion.tsv",row.names = F,col.names = T,sep='\t',quote = F)
+
+somatic_fusion_plot <- import_starfusion("D:/bioinfo/project/IBC_Skin/output_files/RNA/STAR_Fusion_hg38/hg38_somatic_fusion.tsv","hg38")
+IBC_somatic_fusion_plot <- import_starfusion("D:/bioinfo/project/IBC_Skin/output_files/RNA/STAR_Fusion_hg38/hg38_IBC_somatic_fusion.tsv","hg38")
+nonIBC_somatic_fusion_plot <- import_starfusion("D:/bioinfo/project/IBC_Skin/output_files/RNA/STAR_Fusion_hg38/hg38_nonIBC_somatic_fusion.tsv","hg38")
+
+cytoband = read.table(system.file(package = "circlize", "extdata", "cytoBand.txt"),
+                      colClasses = c("character", "numeric", "numeric", "character", "character"), sep = "\t")
+circos.initializeWithIdeogram(species = "hg38")
+
+plot_circle(somatic_fusion_plot)
+plot_circle(IBC_somatic_fusion_plot)
+plot_circle(nonIBC_somatic_fusion_plot)
+
+# 3. combined plot ####
+## 3.1 multiOmicsViz ####
+# load RNA TPM
+RNA_TPM <- read.table("D:/bioinfo/project/IBC_Skin/input_files/TPM_merged.txt", header = T,row.names = 1)
+RNA_TPM <- rename(RNA_TPM,IBC03.T = IBC03.T.ncRNA)
+BRCA_clinical <- readRDS("D:/bioinfo/database/TCGA_BRCA/TCGA_BRCA_clinical_2022.11.16.rds")
+patient_info <- readRDS("D:/bioinfo/project/IBC_Skin/R_base/TCGA_BRCA_33asian.rds")
+TCGA_TPM <- readRDS("D:/bioinfo/database/TCGA_BRCA/geneexp_GENECODE_annotated_TPM.rds")
+TCGA_TPM <- as.data.frame(t(TCGA_TPM))
+TCGA_TPM <- subset(TCGA_TPM,substr(rownames(TCGA_TPM),1,12) %in% patient_info$bcr_patient_barcode)
+TCGA_TPM <- as.data.frame(t(TCGA_TPM))
+TCGA_TPM <- subset(TCGA_TPM, rownames(TCGA_TPM) %in% rownames(RNA_TPM))
+RNA_TPM <- subset(RNA_TPM, rownames(RNA_TPM) %in% rownames(TCGA_TPM))
+TCGA_TPM <- TCGA_TPM[rownames(RNA_TPM),]
+RNA_TPM <- cbind(RNA_TPM,TCGA_TPM)
+colnames(RNA_TPM) <- substr(colnames(RNA_TPM), 1, 12)
+colnames(RNA_TPM) <- gsub("\\.", "-", colnames(RNA_TPM))
+
+# load IBC CNV
+WES_IBC_CNV <- read.table("D:/bioinfo/project/IBC_Skin/output_files/WES/GISTIC2/15IBC_Sequenza_GISTIC_20230712/all_data_by_genes.txt", header = T,row.names = 1,sep = '\t')
+WES_IBC_CNV <- WES_IBC_CNV[,-(1:2)]
+colnames(WES_IBC_CNV) <- gsub("\\.", "-", colnames(WES_IBC_CNV))
+
+# load nonIBC CNV
+WES_nonIBC_CNV <- read.table("D:/bioinfo/project/IBC_Skin/output_files/WES/GISTIC2/5nonIBC_33TCGA_Sequenza_GISTIC_20230713/all_data_by_genes.txt", header = T,row.names = 1,sep = '\t')
+WES_nonIBC_CNV <- WES_nonIBC_CNV[,-(1:2)]
+colnames(WES_nonIBC_CNV) <- substr(colnames(WES_nonIBC_CNV), 1, 12)
+colnames(WES_nonIBC_CNV) <- gsub("\\.", "-", colnames(WES_nonIBC_CNV))
+
+# load IBC+nonIBC cnv
+WES_IBC_nonIBC_CNV <- read.table("D:/bioinfo/project/IBC_Skin/output_files/WES/GISTIC2/15IBC_5nonIBC_33TCGA_Sequenza_GISTIC_20230713_unfiltered/all_data_by_genes.txt", header = T,row.names = 1,sep = '\t')
+WES_IBC_nonIBC_CNV <- WES_IBC_nonIBC_CNV[,-(1:2)]
+colnames(WES_IBC_nonIBC_CNV) <- substr(colnames(WES_IBC_nonIBC_CNV), 1, 12)
+colnames(WES_IBC_nonIBC_CNV) <- gsub("\\.", "-", colnames(WES_IBC_nonIBC_CNV))
+
+table(colnames(WES_IBC_CNV) %in% colnames(RNA_TPM))
+table(colnames(WES_nonIBC_CNV) %in% colnames(RNA_TPM))
+table(colnames(WES_IBC_nonIBC_CNV) %in% colnames(RNA_TPM))
+
+targetOmicsList <- list()
+targetOmicsList[[1]] <- RNA_TPM
+
+saveRDS(RNA_TPM,"D:/bioinfo/project/IBC_Skin/input_files/RNA_TPM.RDS")
+saveRDS(WES_IBC_CNV,"D:/bioinfo/project/IBC_Skin/input_files/WES_IBC_CNV.RDS")
+saveRDS(WES_nonIBC_CNV,"D:/bioinfo/project/IBC_Skin/input_files/WES_nonIBC_CNV.RDS")
+saveRDS(WES_IBC_nonIBC_CNV,"D:/bioinfo/project/IBC_Skin/input_files/WES_IBC_nonIBC_CNV.RDS")
+
+RNA_TPM <- readRDS("RNA_TPM.RDS")
+WES_IBC_CNV <- readRDS("WES_IBC_CNV.RDS")
+WES_nonIBC_CNV <- readRDS("WES_nonIBC_CNV.RDS")
+
+outputfile <- paste("D:/bioinfo/project/IBC_Skin/output_files/IBC_CNV_mRNA")
+multiOmicsViz(WES_IBC_CNV,"CNA","All",targetOmicsList, "mRNA","All",0.05,outputfile)
+
+outputfile <- paste("D:/bioinfo/project/IBC_Skin/output_files/nonIBC_CNV_mRNA")
+multiOmicsViz(WES_nonIBC_CNV,"CNA","All",targetOmicsList, "mRNA","All",0.05,outputfile)
+
+genelocate_df <- read.table("C:/Users/Kevin Zhou/Desktop/multiOmicsViz/extdata/genelocate.txt", header = T,sep = '\t')
+genelocate_df_6 <- subset(genelocate_df,chrom=="6")
+
+## 3.2 Correlation between COSMIC signature & TME ####
+TME_result <- read.table("D:/bioinfo/project/IBC_Skin/output_files/RNA/XCELL/t_xcell_result.txt",header = T,sep = '\t')
+TME_result$SampleID[which(TME_result$SampleID=="IBC01-T-ncRNA")] <- "IBC01-T"
+TME_result$SampleID[which(TME_result$SampleID=="IBC03-T-ncRNA")] <- "IBC03-T"
+TME_result$Sample_barcode <- NULL
+TME_result$group <- NULL
+TME_result$Subtype <- NULL
+TME_result$batch <- NULL
+cell_type_names <- colnames(TME_result)[2:65]
+
+COSMIC_score <- read.table("D:/bioinfo/project/IBC_Skin/output_files/WES/deconstructSigs/deconstructSigs_COSMIC_score.txt",,header = T,sep = '\t')
+colnames(COSMIC_score)[which(colnames(COSMIC_score)=="sampleID")] <- "SampleID"
+COSMIC_score$SampleID <- substr(COSMIC_score$SampleID,1,12)
+COSMIC_score$Group <- NULL
+signature_names <- colnames(COSMIC_score)[1:30]
+
+table(COSMIC_score$SampleID %in% TME_result$SampleID)
+
+Mutsig_TME_df <- merge(COSMIC_score,TME_result,by="SampleID")
+
+IBC_Mutsig_TME_df <- subset(Mutsig_TME_df,Group=="IBC")
+IBC_Mutsig_TME_df$Group <- NULL
+IBC_Mutsig_TME_df$SampleID <- NULL
+IBC_Mutsig_TME_df$ImmuneScore <- NULL
+IBC_Mutsig_TME_df$StromaScore <- NULL
+IBC_Mutsig_TME_df$MicroenvironmentScore <- NULL
+
+nonIBC_Mutsig_TME_df <- subNULLnonIBC_Mutsig_TME_df <- subset(Mutsig_TME_df,Group=="non-IBC")
+nonIBC_Mutsig_TME_df$Group <- NULL
+nonIBC_Mutsig_TME_df$SampleID <- NULL
+nonIBC_Mutsig_TME_df$ImmuneScore <- NULL
+nonIBC_Mutsig_TME_df$StromaScore <- NULL
+nonIBC_Mutsig_TME_df$MicroenvironmentScore <- NULL
+
+# 12x9
+IBC_cor_matrix <- cor(IBC_Mutsig_TME_df, method = "spearman")
+IBC_cor_matrix <- IBC_cor_matrix[signature_names,cell_type_names]
+IBC_cor_matrix <- na.omit(IBC_cor_matrix)
+IBC_cor_matrix[is.na(IBC_cor_matrix)] <- 0
+corrplot(IBC_cor_matrix, method = "color", type = "upper", 
+         tl.col = "black", tl.srt = 45, 
+         title = "Spearman Correlation between Cell Types and COSMIC Signatures")
+corrplot(t(IBC_cor_matrix), method = 'circle') #IBC_COSMIC_TME_cor
+
+nonIBC_cor_matrix <- cor(nonIBC_Mutsig_TME_df, method = "spearman")
+nonIBC_cor_matrix <- nonIBC_cor_matrix[signature_names,cell_type_names]
+nonIBC_cor_matrix <- na.omit(nonIBC_cor_matrix)
+nonIBC_cor_matrix[is.na(nonIBC_cor_matrix)] <- 0
+corrplot(t(nonIBC_cor_matrix), method = 'circle') #nonIBC_COSMIC_TME_cor
+
+# THE END ####
+
+
