@@ -59,7 +59,7 @@ cosmic_hallmark_driver2 <- read.table("D:/bioinfo/database/COSMIC/Cancer_Gene_Ce
 cosmic_hallmark_driver_genes2 <- unique(cosmic_hallmark_driver2$GENE_NAME)
 
 ## 1.2 Input self maf ####
-maf <- read.maf("D:/bioinfo/project/IBC_Skin/output_files/WES/MutSigCV/15IBC_12nonIBC_33TCGA/All_Tumor_33TCGA.mutations.txt")
+maf <- read.maf("D:/bioinfo/project/IBC_Skin/output_files/WES/MutSigCV/15IBC_5nonIBC_33TCGA/All_Tumor_33TCGA.mutations.txt")
 
 sample_list <- data.frame(sample=maf@variants.per.sample$Tumor_Sample_Barcode)
 sample_list <- data.frame(sample=sample_list[order(sample_list$sample)[1:27],])
@@ -92,44 +92,11 @@ col_anno <- subset(col_anno,sample %in% sample_list$sample)
 # 17IBC 5nonIBC 3subtypes
 col_anno$Subtype <- c("TNBC","HER2+","TNBC","HR+HER2-","HER2+","HER2+","TNBC","TNBC","HR+HER2-","HR+HER2-","HR+HER2-","HR+HER2-","HER2+","TNBC","HER2+","HER2+","HER2+","HR+HER2-","HR+HER2-"
                       ,"TNBC","TNBC","TNBC","HER2+","HER2+","HER2+","TNBC","TNBC","HR+HER2-","HR+HER2-","HR+HER2-","HR+HER2-","TNBC","HER2+","TNBC","HER2+","HER2+","HER2+","HR+HER2-","HR+HER2-")
-# 17IBC 12 nonIBC 3subtypes
-col_anno$Subtype <- c("TNBC", #1
-                      "HER2+", #2
-                      "TNBC", #3
-                      "TNBC", #4 
-                      "HR+HER2-", #5
-                      #"HR-HER2+", #6
-                      "HER2+", #7
-                      "HER2+", #8
-                      "TNBC", #9
-                      "TNBC", #10
-                      "HR+HER2-", #11
-                      "HR+HER2-", #12
-                      "HR+HER2-", #13
-                      "HR+HER2-", #14
-                      #"TNBC", #15
-                      "HER2+", #16
-                      "TNBC", #17
-                      "HER2+", #n1
-                      "HER2+", #n2
-                      "HER2+", #n3
-                      "HR+HER2-", #n4
-                      "HR+HER2-", #n5
-                      "HR+HER2-", #n6
-                      "HER2+", #n7
-                      "HER2+", #n8
-                      "TNBC", #n9
-                      "TNBC", #n10
-                      "TNBC", #n11
-                      "HR+HER2-"  #n12
-                      
-)
-
 
 rownames(col_anno) <- col_anno$sample
 col_anno$Cohort <- "FAH"
 
-maf <- read.maf("D:/bioinfo/project/IBC_Skin/output_files/WES/maf/All_Tumor.maf", clinicalData = col_anno) # 12nonIBC
+maf <- read.maf("D:/bioinfo/project/IBC_Skin/output_files/WES/maf/All_Tumor.maf", clinicalData = col_anno)
 maf <- subsetMaf(maf, tsb =  maf@clinical.data$Tumor_Sample_Barcode[1:20])
 
 
@@ -470,9 +437,7 @@ nonIBC_OncoPathways$group <- "nonIBC"
 All_OncogenicPathways <- rbind(IBC_OncoPathways,nonIBC_OncoPathways)
 All_OncogenicPathways$Unmutated_samples <- 15
 
-All_OncogenicPathways$Unmutated_samples[which(All_OncogenicPathways$group=="nonIBC")] <- 45
-All_OncogenicPathways$Unmutated_samples[which(All_OncogenicPathways$group=="nonIBC")] <- 12
-All_OncogenicPathways$Unmutated_samples[which(All_OncogenicPathways$group=="nonIBC")] <- 33
+All_OncogenicPathways$Unmutated_samples[which(All_OncogenicPathways$group=="nonIBC")] <- 38
 
 All_OncogenicPathways_fisher_input <- All_OncogenicPathways[,c("group","Pathway","Mutated_samples")]
 All_OncogenicPathways_fisher_input <- spread(All_OncogenicPathways_fisher_input,group,Mutated_samples) 
@@ -481,9 +446,7 @@ rownames(All_OncogenicPathways_fisher_input) <- All_OncogenicPathways_fisher_inp
 colnames(All_OncogenicPathways_fisher_input) <- c("Pathway","IBC_mutated_samples","nonIBC_mutated_samples")
 All_OncogenicPathways_fisher_input$IBC_unmutated_samples <- 15-All_OncogenicPathways_fisher_input$IBC_mutated_samples
 
-All_OncogenicPathways_fisher_input$nonIBC_unmutated_samples <- 45-All_OncogenicPathways_fisher_input$nonIBC_mutated_samples
-All_OncogenicPathways_fisher_input$nonIBC_unmutated_samples <- 12-All_OncogenicPathways_fisher_input$nonIBC_mutated_samples
-All_OncogenicPathways_fisher_input$nonIBC_unmutated_samples <- 33-All_OncogenicPathways_fisher_input$nonIBC_mutated_samples
+All_OncogenicPathways_fisher_input$nonIBC_unmutated_samples <- 38-All_OncogenicPathways_fisher_input$nonIBC_mutated_samples
 
 All_OncogenicPathways_fisher_input <- All_OncogenicPathways_fisher_input[,c(1,2,4,3,5)]
 
@@ -1603,8 +1566,8 @@ g+geom_text_repel(data = res.df, aes(x = log2FoldChange,
                   box.padding = unit(0.5, "lines"),
                   point.padding = unit(0.8, "lines"), #defult unit is lines
                   segment.color = "#C82423", 
-                  max.overlaps = 100000,#注释点的数目
-                  force = 1,#强制让重叠的文本分开
+                  max.overlaps = 100000,
+                  force = 1,
                   colour="#C82423",
                   show.legend = FALSE) + 
   geom_text_repel(data = res.df, aes(x = log2FoldChange,
@@ -1614,8 +1577,8 @@ g+geom_text_repel(data = res.df, aes(x = log2FoldChange,
                   box.padding = unit(0.5, "lines"),
                   point.padding = unit(0.8, "lines"), #defult unit is lines
                   segment.color = "#2878B5", 
-                  max.overlaps = 100000,#注释点的数目
-                  force = 1,#强制让重叠的文本分开
+                  max.overlaps = 100000,
+                  force = 1,
                   colour="#2878B5",
                   show.legend = FALSE)+
   geom_text_repel(data = res.df, aes(x = log2FoldChange,
@@ -1625,8 +1588,8 @@ g+geom_text_repel(data = res.df, aes(x = log2FoldChange,
                   box.padding = unit(0.5, "lines"),
                   point.padding = unit(0.8, "lines"), #defult unit is lines
                   segment.color = "#887457", 
-                  max.overlaps = 100000,#注释点的数目
-                  force = 1,#强制让重叠的文本分开
+                  max.overlaps = 100000,
+                  force = 1,
                   colour="#887457",
                   show.legend = FALSE)
 
@@ -2390,7 +2353,7 @@ IBC_nonIBC_fusion_somatic_final2$percentage[which(IBC_nonIBC_fusion_somatic_fina
 ggplot(IBC_nonIBC_fusion_somatic_final2, aes(x=reorder(Var1,percentage),y=percentage,fill=Group)) + 
   geom_bar(stat = 'identity',width = 0.5) + 
   coord_flip() + 
-  theme_bw() + #去除背景色
+  theme_bw() + 
   scale_fill_manual(values=c('red','darkblue')) +
   theme(panel.grid =element_blank())+
   theme(panel.border = element_rect(size = 0.6)) + 
@@ -2485,8 +2448,6 @@ genelocate_df_6 <- subset(genelocate_df,chrom=="6")
 
 ## 3.2 Correlation between COSMIC signature & TME ####
 TME_result <- read.table("D:/bioinfo/project/IBC_Skin/output_files/RNA/XCELL/t_xcell_result.txt",header = T,sep = '\t')
-TME_result$SampleID[which(TME_result$SampleID=="IBC01-T-ncRNA")] <- "IBC01-T"
-TME_result$SampleID[which(TME_result$SampleID=="IBC03-T-ncRNA")] <- "IBC03-T"
 TME_result$Sample_barcode <- NULL
 TME_result$group <- NULL
 TME_result$Subtype <- NULL
