@@ -1233,9 +1233,9 @@ ggplot(nonIBC_GISTIC.scores, aes(StartPos, frequency))+
 
 ## 1.21 Plot CNV regions with significant difference ####
 ### 1.21.1 Load files ####
-IBC_nonIBC_all.lesions <- "D:/bioinfo/project/IBC_Skin/output_files/WES/GISTIC2/15IBC_5nonIBC_33TCGA_Sequenza_GISTIC_20230713_unfiltered/all_lesions.conf_5.txt"
-IBC_nonIBC_amp.genes <- "D:/bioinfo/project/IBC_Skin/output_files/WES/GISTIC2/15IBC_5nonIBC_33TCGA_Sequenza_GISTIC_20230713_unfiltered/amp_genes.conf_5.txt"
-IBC_nonIBC_del.genes <- "D:/bioinfo/project/IBC_Skin/output_files/WES/GISTIC2/15IBC_5nonIBC_33TCGA_Sequenza_GISTIC_20230713_unfiltered/del_genes.conf_5.txt"
+IBC_nonIBC_all.lesions <- "D:/bioinfo/project/IBC_Skin/output_files/WES/GISTIC2/15IBC_5nonIBC_33TCGA_Sequenza_GISTIC_20230713_unfiltered/all_lesions.conf_95.txt"
+IBC_nonIBC_amp.genes <- "D:/bioinfo/project/IBC_Skin/output_files/WES/GISTIC2/15IBC_5nonIBC_33TCGA_Sequenza_GISTIC_20230713_unfiltered/amp_genes.conf_95.txt"
+IBC_nonIBC_del.genes <- "D:/bioinfo/project/IBC_Skin/output_files/WES/GISTIC2/15IBC_5nonIBC_33TCGA_Sequenza_GISTIC_20230713_unfiltered/del_genes.conf_95.txt"
 IBC_nonIBC_scores.gis <- "D:/bioinfo/project/IBC_Skin/output_files/WES/GISTIC2/15IBC_5nonIBC_33TCGA_Sequenza_GISTIC_20230713_unfiltered/scores.gistic"
 
 
